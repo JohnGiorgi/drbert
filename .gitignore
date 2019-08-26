@@ -3,6 +3,10 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Custom
+diabetes_data/
+
+
 # C extensions
 *.so
 
