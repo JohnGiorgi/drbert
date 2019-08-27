@@ -7,8 +7,7 @@ from nltk.corpus.reader.conll import ConllCorpusReader
 from torch.utils.data import TensorDataset
 
 from preprocess_cohort import read_charts, read_labels
-
-nlp = spacy.load("en_core_sci_sm")
+from pytorch_transformers import BertTokenizer
 
 CONSTANTS = {
     'SEP': '[SEP]',
@@ -20,6 +19,7 @@ CONSTANTS = {
 
 
 def prepare_cohort_dataset():
+    nlp = spacy.load("en_core_sci_sm")
     base_path = os.path.dirname(os.path.abspath(__file__))
     data_path = os.path.join(base_path, "diabetes_data")
     
@@ -206,3 +206,24 @@ def index_pad_mask_bert_tokens(tokens,
         outputs = outputs + labels
 
     return outputs
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--data_file", default=None, type=str, required=True,
+                        help="De-id and co-hort identification data directory")
+    parser.add_argument("--train_batch_size", default=16, type=int, required=True,
+                        help="train batch size")
+    args = parser.parse_args()
+
+    bert_type = "bert-base-cased"
+    tokenizer = BertTokenizer.from_pretrained(bert_type)
+	deid_train_dataset = data_utils.prepare_deid_dataset(tokenizer, args, is_train=True)
+    cohort_train_dataset = data_utils.prepare_cohort_dataset(tokenizer, args)
+
+	train_deid_sampler = RandomSampler(deid_train_dataset) if args.local_rank == -1 else DistributedSampler(deid_train_dataset)
+    train_deid_dataloader = DataLoader(deid_train_dataset, sampler=train_deid_sampler, batch_size=args.train_batch_size)
+
+    train_cohort_sampler = RandomSampler(cohort_train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
+    train_cohort_dataloader = DataLoader(cohort_train_dataset, sampler=train_cohort_sampler, batch_size=1)

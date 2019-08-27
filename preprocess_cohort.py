@@ -112,11 +112,12 @@ def read_labels(data_path="diabetes_data"):
 				test_labels[chart_id][disease_name] = judgement # format
 	return train_labels, test_labels
 
-train_charts, test_charts = read_charts()
-train_labels, test_labels = read_labels()
-for chart_id, _ in train_charts.items():
-	if chart_id not in train_labels:
-		print(f"{chart_id} not in ")
-for chart_id, _ in test_charts.items():
-	if chart_id not in test_labels:
-		print(f"{chart_id} not in ")
+# train_charts, test_charts = read_charts()
+# train_labels, test_labels = read_labels()
+# for chart_id, _ in train_charts.items():
+# 	if chart_id not in train_labels:
+# 		print(f"{chart_id} not in ")
+# for chart_id, _ in test_charts.items():
+# 	if chart_id not in test_labels:
+# 		print(f"{chart_id} not in ")
+
