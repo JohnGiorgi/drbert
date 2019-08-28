@@ -79,7 +79,7 @@ def prepare_cohort_dataset(tokenizer, is_train=True):
         labels_list.append(labels[labels_chart])
         labels_ids.append(labels_chart)
 
-    # #process inputs
+    #process inputs
     for chart in inputs_list: 
         max_sent_len = 250
         doc = nlp(chart)
@@ -259,23 +259,21 @@ def index_pad_mask_bert_tokens(tokens,
 
     return outputs
 
-print(prepare_cohort_dataset(BertTokenizer.from_pretrained("bert-base-cased")))
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--data_file", default=None, type=str, required=True,
+                        help="De-id and co-hort identification data directory")
+    parser.add_argument("--train_batch_size", default=16, type=int, required=True,
+                        help="train batch size")
+    args = parser.parse_args()
 
-# if __name__ == "__main__":
-#     import argparse
-#     parser = argparse.ArgumentParser()
-#     parser.add_argument("--data_file", default=None, type=str, required=True,
-#                         help="De-id and co-hort identification data directory")
-#     parser.add_argument("--train_batch_size", default=16, type=int, required=True,
-#                         help="train batch size")
-#     args = parser.parse_args()
+    bert_type = "bert-base-cased"
+    tokenizer = BertTokenizer.from_pretrained(bert_type)
+    deid_train_dataset = data_utils.prepare_deid_dataset(tokenizer, args, is_train=True)
+    cohort_train_dataset = data_utils.prepare_cohort_dataset(tokenizer, args)
+    train_deid_sampler = RandomSampler(deid_train_dataset) if args.local_rank == -1 else DistributedSampler(deid_train_dataset)
+    train_deid_dataloader = DataLoader(deid_train_dataset, sampler=train_deid_sampler, batch_size=args.train_batch_size)
 
-#     bert_type = "bert-base-cased"
-#     tokenizer = BertTokenizer.from_pretrained(bert_type)
-#     deid_train_dataset = data_utils.prepare_deid_dataset(tokenizer, args, is_train=True)
-#     cohort_train_dataset = data_utils.prepare_cohort_dataset(tokenizer, args)
-#     train_deid_sampler = RandomSampler(deid_train_dataset) if args.local_rank == -1 else DistributedSampler(deid_train_dataset)
-#     train_deid_dataloader = DataLoader(deid_train_dataset, sampler=train_deid_sampler, batch_size=args.train_batch_size)
-
-#     train_cohort_sampler = RandomSampler(cohort_train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
-#     train_cohort_dataloader = DataLoader(cohort_train_dataset, sampler=train_cohort_sampler, batch_size=1)
+    train_cohort_sampler = RandomSampler(cohort_train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
+    train_cohort_dataloader = DataLoader(cohort_train_dataset, sampler=train_cohort_sampler, batch_size=1)
