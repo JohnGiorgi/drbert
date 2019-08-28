@@ -19,7 +19,7 @@ class BertForJointDeIDAndCohortID(BertPreTrainedModel):
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
         # DeID Head
-        self.deid_classifier = nn.Linear(config.hidden_size, config.max_seq_len * self.num_deid_labels)
+        self.deid_classifier = nn.Linear(config.hidden_size, self.num_deid_labels)
 
         # Cohort head
         self.cohort_ffnn = nn.Sequential(
@@ -61,10 +61,6 @@ class BertForJointDeIDAndCohortID(BertPreTrainedModel):
             if attention_mask is not None:
                 active_loss = attention_mask.view(-1) == 1
                 active_logits = logits.view(*num_labels)[active_loss]
-                # TODO: Will this work for cohort task?
-
-                [0.1, 0.1, 0.8] [2] 
-                [0.1, 0.8, 0.1] [1] 1 x 16
                 active_labels = labels.view(-1)[active_loss]
                 loss = self.loss_fct(active_logits, active_labels)
             else:

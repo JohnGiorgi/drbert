@@ -196,6 +196,7 @@ def index_pad_mask_bert_tokens(tokens,
         )
         orig_to_tok_map = torch.as_tensor(orig_to_tok_map)
 
+    indexed_labels = None
     if labels:
         indexed_labels = pad_sequences(
             sequences=[[tag_to_idx[lab] for lab in sent] for sent in labels],

@@ -3,6 +3,7 @@ import json
 import os
 
 #print("hello from the other side")
+# TODO, CHANGET INTUITIVE TO TEXTUAL
 
 def read_charts(data_path="diabetes_data"):
 
