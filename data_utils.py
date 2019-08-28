@@ -17,31 +17,72 @@ CONSTANTS = {
     'TOK_MAP_PAD': -100
 }
 
+COHORT_LABEL_CONSTANTS = {
+    'U': 0,
+    'Q': 1,
+    'N': 2,
+    'Y': 3,
+}
 
-def prepare_cohort_dataset():
+COHORT_DISEASE_CONSTANTS = {
+    'Obesity': 0,
+    'Diabetes': 1,
+    'Hypercholesterolemia': 2,
+    'Hypertriglyceridemia': 3,
+    'Hypertension': 4,
+    'CAD': 5, 
+    'CHF': 6,
+    'PVD': 7,
+    'Venous Insufficiency': 8,
+    'OA': 9,
+    'OSA': 10,
+    'Asthma': 11,
+    'GERD': 12,
+    'Gallstones': 13,
+    'Depression': 14,
+    'Gout': 15
+}
+
+
+def prepare_cohort_dataset(tokenizer, is_train=True):
     nlp = spacy.load("en_core_sci_sm")
     base_path = os.path.dirname(os.path.abspath(__file__))
     data_path = os.path.join(base_path, "diabetes_data")
     
     #charts format: test_charts[chart_id] = text # format
-    input = read_charts(data_path)
+    inputs_preprocessed = read_charts(data_path)
     
     #labels format: test_labels[chart_id][disease_name] = judgement # format
-    labels = read_labels(data_path)
+    labels_preprocessed = read_labels(data_path)
     
-    documents = []
-    documents_padded = []
+    inputs_list = []
+    inputs_ids = []
+    inputs_padded = []
     attention_masks = []
-    doc_ids = []
     
-    for chart in input[0]:
+    labels_list = []
+    labels_ids = []
+    labels_tensorized = []
     
-        documents.append(input[0][chart])
-        doc_ids.append(chart)
+    if is_train: 
+        inputs = inputs_preprocessed[0]
+        labels = labels_preprocessed[0]
+
+    else: 
+        inputs = inputs_preprocessed[1]
+        labels = labels_preprocessed[1] 
     
-    for doc in documents: 
+    for inputs_chart, labels_chart in zip(inputs,labels):
+        inputs_list.append(inputs[inputs_chart])
+        inputs_ids.append(inputs_chart)
+        
+        labels_list.append(labels[labels_chart])
+        labels_ids.append(labels_chart)
+
+    # #process inputs
+    for chart in inputs_list: 
         max_sent_len = 250
-        doc = nlp(doc)
+        doc = nlp(chart)
 
         sentence_list = [sentence for sentence in list(doc.sents)]
         token_list = [[str(token) for token in sentence] for sentence in sentence_list]
@@ -55,13 +96,27 @@ def prepare_cohort_dataset():
             sentence_list = sentence_list[:250]
         
         token_ids, attention_mask = index_pad_mask_bert_tokens(token_list, tokenizer)
-        documents_padded.append(token_ids.unsqueeze(0))
+        inputs_padded.append(token_ids.unsqueeze(0))
         attention_masks.append(attention_mask.unsqueeze(0))
+
+    #process labels
+    for i in range(len(labels_list)):
+        labels_array = torch.zeros(16)
+
+        for disease in COHORT_DISEASE_CONSTANTS:
+            if disease in labels_list[i]:
+                score = COHORT_LABEL_CONSTANTS[labels_list[i][disease]]
+                labels_array[COHORT_DISEASE_CONSTANTS[disease]] = score
+
+        labels_tensorized.append(labels_array.unsqueeze(0))
         
-    documents_padded = torch.cat(documents_padded, dim=0)
+    inputs_padded = torch.cat(inputs_padded, dim=0)
     attention_masks = torch.cat(attention_masks, dim=0)
-    
-    return TensorDataset(documents_padded, attention_masks)
+    labels_tensorized = torch.cat(labels_tensorized, dim=0)
+
+    dataset = TensorDataset(inputs_padded, attention_masks, labels_tensorized)
+    return dataset.shape, dataset
+    # return TensorDataset(inputs_padded, attention_masks, labels_tensorized)
 
 
 def prepare_deid_dataset(tokenizer, args, is_train=True):
@@ -207,23 +262,23 @@ def index_pad_mask_bert_tokens(tokens,
 
     return outputs
 
+print(prepare_cohort_dataset(BertTokenizer.from_pretrained("bert-base-cased")))
 
-if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--data_file", default=None, type=str, required=True,
-                        help="De-id and co-hort identification data directory")
-    parser.add_argument("--train_batch_size", default=16, type=int, required=True,
-                        help="train batch size")
-    args = parser.parse_args()
+# if __name__ == "__main__":
+#     import argparse
+#     parser = argparse.ArgumentParser()
+#     parser.add_argument("--data_file", default=None, type=str, required=True,
+#                         help="De-id and co-hort identification data directory")
+#     parser.add_argument("--train_batch_size", default=16, type=int, required=True,
+#                         help="train batch size")
+#     args = parser.parse_args()
 
-    bert_type = "bert-base-cased"
-    tokenizer = BertTokenizer.from_pretrained(bert_type)
-	deid_train_dataset = data_utils.prepare_deid_dataset(tokenizer, args, is_train=True)
-    cohort_train_dataset = data_utils.prepare_cohort_dataset(tokenizer, args)
+#     bert_type = "bert-base-cased"
+#     tokenizer = BertTokenizer.from_pretrained(bert_type)
+#     deid_train_dataset = data_utils.prepare_deid_dataset(tokenizer, args, is_train=True)
+#     cohort_train_dataset = data_utils.prepare_cohort_dataset(tokenizer, args)
+#     train_deid_sampler = RandomSampler(deid_train_dataset) if args.local_rank == -1 else DistributedSampler(deid_train_dataset)
+#     train_deid_dataloader = DataLoader(deid_train_dataset, sampler=train_deid_sampler, batch_size=args.train_batch_size)
 
-	train_deid_sampler = RandomSampler(deid_train_dataset) if args.local_rank == -1 else DistributedSampler(deid_train_dataset)
-    train_deid_dataloader = DataLoader(deid_train_dataset, sampler=train_deid_sampler, batch_size=args.train_batch_size)
-
-    train_cohort_sampler = RandomSampler(cohort_train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
-    train_cohort_dataloader = DataLoader(cohort_train_dataset, sampler=train_cohort_sampler, batch_size=1)
+#     train_cohort_sampler = RandomSampler(cohort_train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
+#     train_cohort_dataloader = DataLoader(cohort_train_dataset, sampler=train_cohort_sampler, batch_size=1)
