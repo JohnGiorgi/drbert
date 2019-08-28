@@ -2,9 +2,6 @@ import xmltodict
 import json
 import os
 
-#print("hello from the other side")
-# TODO, CHANGET INTUITIVE TO TEXTUAL
-
 def read_charts(data_path="data/diabetes_data"):
 
 	train_charts = dict()
@@ -117,12 +114,27 @@ def read_labels(data_path="data/diabetes_data"):
 				test_labels[chart_id][disease_name] = judgement # format
 	return train_labels, test_labels
 
-train_charts, test_charts = read_charts("data/diabetes_data")
-train_labels, test_labels = read_labels("data/diabetes_data")
-for chart_id, _ in train_charts.items():
-	if chart_id not in train_labels:
-		print(f"{chart_id} not in ")
-for chart_id, _ in test_charts.items():
-	if chart_id not in test_labels:
-		print(f"{chart_id} not in ")
+
+
+if __name__ == "__main__":
+	train_charts, test_charts = read_charts("data/diabetes_data")
+	train_labels, test_labels = read_labels("data/diabetes_data")
+	for chart_id, _ in train_charts.items():
+		if chart_id not in train_labels:
+			print(f"{chart_id} not in ")
+	for chart_id, _ in test_charts.items():
+		if chart_id not in test_labels:
+			print(f"{chart_id} not in ")
+
+	for chart_id, chart_labels in train_labels.items():
+		if len(chart_labels) != 16:
+			print(chart_labels)
+
+
+
+
+
+
+
+
 
