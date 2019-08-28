@@ -4,7 +4,8 @@ import spacy
 import torch
 from keras_preprocessing.sequence import pad_sequences
 from nltk.corpus.reader.conll import ConllCorpusReader
-from torch.utils.data import TensorDataset
+from torch.utils.data import (DataLoader, RandomSampler, SequentialSampler,
+                              TensorDataset)
 
 from preprocess_cohort import read_charts, read_labels
 from pytorch_transformers import BertTokenizer
@@ -67,16 +68,19 @@ def prepare_cohort_dataset():
 
 def prepare_deid_dataset(tokenizer, args, is_train=True):
     conll_parser = ConllCorpusReader(args.dataset_folder, '.conll', ('words', 'pos'))
-
-    sents = list(conll_parser.sents(args.data_file))
-    tagged_sents = list(conll_parser.tagged_sents(args.data_file))
+    if is_train:
+        data_file = "train.tsv"
+    else:
+        data_file = "test.tsv"
+    sents = list(conll_parser.sents(data_file))
+    tagged_sents = list(conll_parser.tagged_sents(data_file))
     max_sent_len = 512 if is_train else None
 
     assert len(sents) == len(tagged_sents)
 
     bert_tokens, orig_to_tok_map, bert_labels, tag_to_idx = wordpiece_tokenize_sents(sents, tokenizer, tagged_sents)
 
-    indexed_tokens, orig_to_tok_map, attention_mask, indexed_labels = \
+    indexed_tokens, attention_mask, orig_to_tok_map, indexed_labels = \
         index_pad_mask_bert_tokens(bert_tokens, tokenizer, maxlen=max_sent_len, labels=bert_labels, orig_to_tok_map=orig_to_tok_map, tag_to_idx=tag_to_idx)
 
     return TensorDataset(indexed_tokens, attention_mask, indexed_labels, orig_to_tok_map)
@@ -203,14 +207,12 @@ def index_pad_mask_bert_tokens(tokens,
         )
         indexed_labels = torch.as_tensor(indexed_labels)
 
-    return indexed_tokens, attention_mask, orig_to_tok_map, labels
+    return indexed_tokens, attention_mask, orig_to_tok_map, indexed_labels
 
 
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_file", default=None, type=str, required=True,
-                        help="De-id and co-hort identification data file")
     parser.add_argument("--dataset_folder", default=None, type=str, required=True,
                         help="De-id and co-hort identification data directory")
     parser.add_argument("--train_batch_size", default=16, type=int,
@@ -220,10 +222,20 @@ if __name__ == "__main__":
     bert_type = "bert-base-cased"
     tokenizer = BertTokenizer.from_pretrained(bert_type)
     deid_train_dataset = prepare_deid_dataset(tokenizer, args, is_train=True)
+    train_deid_sampler = RandomSampler(deid_train_dataset)
+    train_deid_dataloader = DataLoader(deid_train_dataset, sampler=train_deid_sampler, batch_size=args.train_batch_size)
+    for step, (indexed_tokens, attention_mask, indexed_labels, orig_to_tok_map) in enumerate(train_deid_dataloader):
+        print(f"step: {step}")
+        print(f"indexed_tokens: {indexed_tokens}")
+        print(f"attention_mask: {attention_mask}")
+        print(f"indexed_labels: {indexed_labels}")
+        print(f"orig_to_tok_map: {orig_to_tok_map}")
+        quit()
     # cohort_train_dataset = data_utils.prepare_cohort_dataset(tokenizer, args)
 
-# train_deid_sampler = RandomSampler(deid_train_dataset) if args.local_rank == -1 else DistributedSampler(deid_train_dataset)
+
  #    train_deid_dataloader = DataLoader(deid_train_dataset, sampler=train_deid_sampler, batch_size=args.train_batch_size)
 
  #    train_cohort_sampler = RandomSampler(cohort_train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
  #    train_cohort_dataloader = DataLoader(cohort_train_dataset, sampler=train_cohort_sampler, batch_size=1)
+

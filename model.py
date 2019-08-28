@@ -8,6 +8,10 @@ class BertForJointDeIDAndCohortID(BertPreTrainedModel):
     def __init__(self, config):
         super(BertForJointDeIDAndCohortID, self).__init__(config)
 
+        # Parameters
+        self.num_deid_labels = config.num_deid_labels
+        self.num_cohort_labels = config.cohort_num_disease * config.cohort_num_classes
+
         # Core BERT model
         self.bert = BertModel(config)
         self.apply(self.init_weights)
@@ -15,7 +19,7 @@ class BertForJointDeIDAndCohortID(BertPreTrainedModel):
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
         # DeID Head
-        self.deid_classifier = nn.Linear(config.hidden_size, config.num_deid_labels)
+        self.deid_classifier = nn.Linear(config.hidden_size, config.max_seq_len * self.num_deid_labels)
 
         # Cohort head
         self.cohort_ffnn = nn.Sequential(
@@ -28,10 +32,11 @@ class BertForJointDeIDAndCohortID(BertPreTrainedModel):
             nn.ReLU(),
             nn.Dropout(config.dropout)
         )
+        
 
-        self.cohort_classifier = nn.Linear(config.cohort_ffnn_size // 2,
-                                           # TODO: Is this the right output size?
-                                           config.cohort_num_disease * config.cohort_num_classes)
+        self.cohort_classifier = nn.Linear(config.cohort_ffnn_size // 2, self.num_cohort_labels)
+
+        self.loss_fct = CrossEntropyLoss()
 
     def forward(self, input_ids, token_type_ids=None, attention_mask=None, labels=None,
                 position_ids=None, head_mask=None, task='deid'):
@@ -45,22 +50,23 @@ class BertForJointDeIDAndCohortID(BertPreTrainedModel):
             num_labels = (-1, self.num_deid_labels)
             logits = self.deid_classifier(sequence_output)
         elif task == 'cohort':
-            # TODO: What is the number of labels for cohort task?
-            # num_labels = ?
+            num_labels = (-1, self.num_cohort_labels)
             sequence_output = self.cohort_ffnn(sequence_output)
             logits = self.cohort_classifier(sequence_output)
 
         outputs = (logits,) + outputs[2:]  # add hidden states and attention if they are here
 
         if labels is not None:
-            loss_fct = CrossEntropyLoss()
             # Only keep active parts of the loss
             if attention_mask is not None:
                 active_loss = attention_mask.view(-1) == 1
                 active_logits = logits.view(*num_labels)[active_loss]
                 # TODO: Will this work for cohort task?
+
+                [0.1, 0.1, 0.8] [2] 
+                [0.1, 0.8, 0.1] [1] 1 x 16
                 active_labels = labels.view(-1)[active_loss]
-                loss = loss_fct(active_logits, active_labels)
+                loss = self.loss_fct(active_logits, active_labels)
             else:
-                loss = loss_fct(logits.view(*num_labels), labels.view(-1))
+                loss = self.loss_fct(logits.view(*num_labels), labels.view(-1))
             outputs = (loss,) + outputs
