@@ -114,11 +114,8 @@ def prepare_cohort_dataset(tokenizer, is_train=True):
     attention_masks = torch.cat(attention_masks, dim=0)
     labels_tensorized = torch.cat(labels_tensorized, dim=0)
 
-    dataset = TensorDataset(inputs_padded, attention_masks, labels_tensorized)
-    return dataset.shape, dataset
-    # return TensorDataset(inputs_padded, attention_masks, labels_tensorized)
-
-
+    return TensorDataset(inputs_padded, attention_masks, labels_tensorized)
+    
 def prepare_deid_dataset(tokenizer, args, is_train=True):
     conll_parser = ConllCorpusReader(args.dataset_folder, '.conll', ('words', 'pos'))
 
