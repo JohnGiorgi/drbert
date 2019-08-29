@@ -2,6 +2,51 @@ import xmltodict
 import json
 import os
 
+COHORT_LABEL_CONSTANTS = {
+    'U': 0,
+    'Q': 1,
+    'N': 2,
+    'Y': 3,
+}
+
+COHORT_DISEASE_LIST = [
+    'Obesity',
+    'Diabetes',
+    'Hypercholesterolemia',
+    'Hypertriglyceridemia',
+    'Hypertension',
+    'CAD',
+    'CHF',
+    'PVD',
+    'Venous Insufficiency',
+    'OA',
+    'OSA',
+    'Asthma',
+    'GERD',
+    'Gallstones',
+    'Depression',
+    'Gout'
+]
+
+COHORT_DISEASE_CONSTANTS = {
+    'Obesity': 0,
+    'Diabetes': 1,
+    'Hypercholesterolemia': 2,
+    'Hypertriglyceridemia': 3,
+    'Hypertension': 4,
+    'CAD': 5, 
+    'CHF': 6,
+    'PVD': 7,
+    'Venous Insufficiency': 8,
+    'OA': 9,
+    'OSA': 10,
+    'Asthma': 11,
+    'GERD': 12,
+    'Gallstones': 13,
+    'Depression': 14,
+    'Gout': 15
+}
+
 def read_charts(data_path="data/diabetes_data"):
 
 	train_charts = dict()
@@ -39,21 +84,19 @@ def read_labels(data_path="data/diabetes_data"):
 		for i in range(len(label_data['diseaseset']['diseases'])):
 			if label_data['diseaseset']['diseases'][i]['@source'] != "textual":
 				continue
-			print(f"{addendum_file}: {label_data['diseaseset']['diseases'][i]['@source']}")
 			for j in range(len(label_data['diseaseset']['diseases'][i]['disease'])):
 				disease_name = label_data['diseaseset']['diseases'][i]['disease'][j]['@name']
 				for k in range(len(label_data['diseaseset']['diseases'][i]['disease'][j]['doc'])):
 					chart_id = label_data['diseaseset']['diseases'][i]['disease'][j]['doc'][k]['@id']
 					judgement = label_data['diseaseset']['diseases'][i]['disease'][j]['doc'][k]['@judgment']
 					if chart_id not in train_labels:
-						train_labels[chart_id] = dict()
+						train_labels[chart_id] = dict.fromkeys(COHORT_DISEASE_LIST, 'N')
 					train_labels[chart_id][disease_name] = judgement # format
 
 	addendum_file = os.path.join(data_path, "obesity_standoff_annotations_training_addendum2.xml")
 	with open(addendum_file) as open_file:
 		read_file = open_file.read()
 		label_data = dict(xmltodict.parse(read_file))
-		print(f"{addendum_file}: {label_data['diseaseset']['diseases']['@source']}")
 		disease_label_list = label_data['diseaseset']['diseases']['disease']
 		for disease_label in disease_label_list:
 			disease_name = disease_label['@name']
@@ -63,18 +106,14 @@ def read_labels(data_path="data/diabetes_data"):
 					chart_id = doc['@id']
 					chart_label = doc['@judgment']
 					if chart_id not in train_labels:
-						train_labels[chart_id] = dict()
-					if disease_name in train_labels[chart_id]:
-						print("uh oh.")
+						train_labels[chart_id] = dict.fromkeys(COHORT_DISEASE_LIST, 'N')
 					train_labels[chart_id][disease_name] = chart_label # format
 			else:
 				doc = disease_docs
 				chart_id = doc['@id']
 				chart_label = doc['@judgment']
 				if chart_id not in train_labels:
-					train_labels[chart_id] = dict()
-				if disease_name in train_labels[chart_id]:
-					print("uh oh.")
+					train_labels[chart_id] = dict.fromkeys(COHORT_DISEASE_LIST, 'N')
 				train_labels[chart_id][disease_name] = chart_label # format
 
 	addendum_file = os.path.join(data_path, "obesity_standoff_annotations_training_addendum3.xml")
@@ -84,7 +123,6 @@ def read_labels(data_path="data/diabetes_data"):
 		for i in range(len(label_data['diseaseset']['diseases'])):
 			if label_data['diseaseset']['diseases'][i]['@source'] != "textual":
 				continue
-			print(f"{addendum_file}: {label_data['diseaseset']['diseases'][i]['@source']}")
 
 			for j in range(len(label_data['diseaseset']['diseases'][i]['disease'])):
 				disease_name = label_data['diseaseset']['diseases'][i]['disease'][j]['@name']
@@ -93,9 +131,7 @@ def read_labels(data_path="data/diabetes_data"):
 					chart_id = doc['@id']
 					judgement = doc['@judgment']
 					if chart_id not in train_labels:
-						train_labels[chart_id] = dict()
-					if disease_name in train_labels[chart_id]:
-						print("uh oh.")
+						train_labels[chart_id] = dict.fromkeys(COHORT_DISEASE_LIST, 'N')
 					train_labels[chart_id][disease_name] = judgement # format
 
 	test_labels = dict()
@@ -103,14 +139,13 @@ def read_labels(data_path="data/diabetes_data"):
 	with open(test_file) as open_file:
 		read_file = open_file.read()
 		label_data = dict(xmltodict.parse(read_file))
-		print(f"{test_file}: {label_data['diseaseset']['diseases']['@source']}")
 		for i in range(len(label_data['diseaseset']['diseases']['disease'])):
 			disease_name = label_data['diseaseset']['diseases']['disease'][i]['@name']
 			for j in range(len(label_data['diseaseset']['diseases']['disease'][i]['doc'])):
 				chart_id = label_data['diseaseset']['diseases']['disease'][i]['doc'][j]['@id']
 				judgement = label_data['diseaseset']['diseases']['disease'][i]['doc'][j]['@judgment']
 				if chart_id not in test_labels:
-					test_labels[chart_id] = dict()
+					test_labels[chart_id] = dict.fromkeys(COHORT_DISEASE_LIST, 'N')
 				test_labels[chart_id][disease_name] = judgement # format
 	return train_labels, test_labels
 
@@ -130,6 +165,9 @@ if __name__ == "__main__":
 		if len(chart_labels) != 16:
 			print(chart_labels)
 
+	for chart_id, chart_labels in test_labels.items():
+		if len(chart_labels) != 16:
+			print(chart_labels)
 
 
 

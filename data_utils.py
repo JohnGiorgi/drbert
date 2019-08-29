@@ -45,11 +45,12 @@ COHORT_DISEASE_CONSTANTS = {
     'Gout': 15
 }
 
+MAX_COHORT_NUM_SENTS = 256 # number of sentences in chart
+MAX_COHORT_NUM_TOKENS = 64 # sentence length
 
-def prepare_cohort_dataset(tokenizer, is_train=True):
-    nlp = spacy.load("en_core_sci_sm")
-    base_path = os.path.dirname(os.path.abspath(__file__))
-    data_path = os.path.join(base_path, "diabetes_data")
+def prepare_cohort_dataset(tokenizer, args, is_train=True):
+    nlp = spacy.load("en_core_sci_md")
+    data_path = os.path.join(args.dataset_folder, "diabetes_data")
     
     #charts format: test_charts[chart_id] = text # format
     inputs_preprocessed = read_charts(data_path)
@@ -69,35 +70,32 @@ def prepare_cohort_dataset(tokenizer, is_train=True):
     if is_train: 
         inputs = inputs_preprocessed[0]
         labels = labels_preprocessed[0]
-
     else: 
         inputs = inputs_preprocessed[1]
         labels = labels_preprocessed[1] 
-    
-    for inputs_chart, labels_chart in zip(inputs,labels):
-        inputs_list.append(inputs[inputs_chart])
-        inputs_ids.append(inputs_chart)
-        
-        labels_list.append(labels[labels_chart])
-        labels_ids.append(labels_chart)
 
-    #process inputs
-    for chart in inputs_list: 
-        max_sent_len = 250
+    # process inputs
+    for chart_id, chart in inputs.items(): # chart_id, text
+        
         doc = nlp(chart)
 
         sentence_list = [sentence for sentence in list(doc.sents)]
-        token_list = [[str(token) for token in sentence] for sentence in sentence_list]
+        sentence_list = sentence_list[:MAX_COHORT_NUM_SENTS]
 
-        if len(sentence_list) < max_sent_len:
-            padding_len = max_sent_len - len(sentence_list)
-            pad = [CONSTANTS['PAD'] for i in range(512)]
-            token_list += [pad for i in range(padding_len)]
+        token_list = [[str(token) for token in sentence] for sentence in sentence_list]
+        # truncate sentence list at max len
+        for i, tokens in enumerate(token_list):
+            padding_len = MAX_COHORT_NUM_TOKENS - len(tokens)
+            if padding_len <= 0:
+                token_list[i] = tokens[:MAX_COHORT_NUM_TOKENS]
+            else:
+                padding = [CONSTANTS['PAD']] * padding_len
+                token_list[i].extend(padding)
         
-        else:
-            sentence_list = sentence_list[:250]
-        
-        token_ids, attention_mask = index_pad_mask_bert_tokens(token_list, tokenizer)
+        token_ids, attention_mask, _, indexed_labels = index_pad_mask_bert_tokens(token_list, tokenizer, tag_to_idx=COHORT_DISEASE_CONSTANTS)
+        print(f"token_ids: {token_ids.shape}")
+        print(f"attention_mask: {attention_mask.shape}")
+        quit()
         inputs_padded.append(token_ids.unsqueeze(0))
         attention_masks.append(attention_mask.unsqueeze(0))
 
@@ -273,21 +271,37 @@ if __name__ == "__main__":
 
     bert_type = "bert-base-cased"
     tokenizer = BertTokenizer.from_pretrained(bert_type)
-    deid_train_dataset = prepare_deid_dataset(tokenizer, args, is_train=True)
-    train_deid_sampler = RandomSampler(deid_train_dataset)
-    train_deid_dataloader = DataLoader(deid_train_dataset, sampler=train_deid_sampler, batch_size=args.train_batch_size)
-    for step, (indexed_tokens, attention_mask, indexed_labels, orig_to_tok_map) in enumerate(train_deid_dataloader):
-        print(f"step: {step}")
-        print(f"indexed_tokens: {indexed_tokens}")
-        print(f"attention_mask: {attention_mask}")
-        print(f"indexed_labels: {indexed_labels}")
-        print(f"orig_to_tok_map: {orig_to_tok_map}")
-        quit()
-    # cohort_train_dataset = data_utils.prepare_cohort_dataset(tokenizer, args)
+
+    # deid_train_dataset = prepare_deid_dataset(tokenizer, args, is_train=True)
+    # train_deid_sampler = RandomSampler(deid_train_dataset)
+    # train_deid_dataloader = DataLoader(deid_train_dataset, sampler=train_deid_sampler, batch_size=args.train_batch_size)
+    # for step, (indexed_tokens, attention_mask, indexed_labels, orig_to_tok_map) in enumerate(train_deid_dataloader):
+    #     print(f"step: {step}")
+    #     print(f"indexed_tokens: {indexed_tokens}")
+    #     print(f"attention_mask: {attention_mask}")
+    #     print(f"indexed_labels: {indexed_labels}")
+    #     print(f"orig_to_tok_map: {orig_to_tok_map}")
+    #     break
+
+    cohort_train_dataset = prepare_cohort_dataset(tokenizer, args)
+    train_cohort_sampler = RandomSampler(cohort_train_dataset)
+    train_cohort_dataloader = DataLoader(cohort_train_dataset, sampler=train_cohort_sampler, batch_size=1)
 
 
- #    train_deid_dataloader = DataLoader(deid_train_dataset, sampler=train_deid_sampler, batch_size=args.train_batch_size)
 
- #    train_cohort_sampler = RandomSampler(cohort_train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
- #    train_cohort_dataloader = DataLoader(cohort_train_dataset, sampler=train_cohort_sampler, batch_size=1)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
