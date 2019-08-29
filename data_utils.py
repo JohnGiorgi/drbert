@@ -1,7 +1,9 @@
 import os
-
 import spacy
 import torch
+
+from tqdm import tqdm
+
 from keras_preprocessing.sequence import pad_sequences
 from nltk.corpus.reader.conll import ConllCorpusReader
 from torch.utils.data import (DataLoader, RandomSampler, SequentialSampler,
@@ -9,6 +11,8 @@ from torch.utils.data import (DataLoader, RandomSampler, SequentialSampler,
 
 from preprocess_cohort import read_charts, read_labels
 from pytorch_transformers import BertTokenizer
+
+
 
 CONSTANTS = {
     'SEP': '[SEP]',
@@ -46,7 +50,7 @@ COHORT_DISEASE_CONSTANTS = {
 }
 
 MAX_COHORT_NUM_SENTS = 256 # number of sentences in chart
-MAX_COHORT_NUM_TOKENS = 64 # sentence length
+
 
 def prepare_cohort_dataset(tokenizer, args, is_train=True):
     nlp = spacy.load("en_core_sci_md")
@@ -66,7 +70,7 @@ def prepare_cohort_dataset(tokenizer, args, is_train=True):
     labels_list = []
     labels_ids = []
     labels_tensorized = []
-    
+
     if is_train: 
         inputs = inputs_preprocessed[0]
         labels = labels_preprocessed[0]
@@ -74,41 +78,37 @@ def prepare_cohort_dataset(tokenizer, args, is_train=True):
         inputs = inputs_preprocessed[1]
         labels = labels_preprocessed[1] 
 
-    # process inputs
-    for chart_id, chart in inputs.items(): # chart_id, text
-        
+    chart_ids = list(labels.keys())
+    
+    max_sent_len = 512
+
+    for chart_id in tqdm(chart_ids):
+        chart = inputs[chart_id]
+        label = labels[chart_id]
+
         doc = nlp(chart)
 
         sentence_list = [sentence for sentence in list(doc.sents)]
-        sentence_list = sentence_list[:MAX_COHORT_NUM_SENTS]
-
+        sentence_list = sentence_list[:MAX_COHORT_NUM_SENTS] # clip
         token_list = [[str(token) for token in sentence] for sentence in sentence_list]
-        # truncate sentence list at max len
-        for i, tokens in enumerate(token_list):
-            padding_len = MAX_COHORT_NUM_TOKENS - len(tokens)
-            if padding_len <= 0:
-                token_list[i] = tokens[:MAX_COHORT_NUM_TOKENS]
-            else:
-                padding = [CONSTANTS['PAD']] * padding_len
-                token_list[i].extend(padding)
+
+        num_extra_sentences = MAX_COHORT_NUM_SENTS - len(token_list)
+        for i in range(num_extra_sentences):
+            sentence_padding = [CONSTANTS['PAD']] * max_sent_len
+            token_list.append(sentence_padding)
         
-        token_ids, attention_mask, _, indexed_labels = index_pad_mask_bert_tokens(token_list, tokenizer, tag_to_idx=COHORT_DISEASE_CONSTANTS)
-        print(f"token_ids: {token_ids.shape}")
-        print(f"attention_mask: {attention_mask.shape}")
-        quit()
+        token_ids, attention_mask, _, indexed_labels = \
+            index_pad_mask_bert_tokens(token_list, tokenizer, tag_to_idx=COHORT_DISEASE_CONSTANTS)
         inputs_padded.append(token_ids.unsqueeze(0))
         attention_masks.append(attention_mask.unsqueeze(0))
 
-    #process labels
-    for i in range(len(labels_list)):
         labels_array = torch.zeros(16)
 
-        for disease in COHORT_DISEASE_CONSTANTS:
-            if disease in labels_list[i]:
-                score = COHORT_LABEL_CONSTANTS[labels_list[i][disease]]
-                labels_array[COHORT_DISEASE_CONSTANTS[disease]] = score
+        for disease, judgement in label.items():
+            judgement = COHORT_LABEL_CONSTANTS[judgement]
+            labels_array[COHORT_DISEASE_CONSTANTS[disease]] = judgement
 
-        labels_tensorized.append(labels_array.unsqueeze(0))
+        labels_tensorized.append(labels_array.unsqueeze(0).long())
         
     inputs_padded = torch.cat(inputs_padded, dim=0)
     attention_masks = torch.cat(attention_masks, dim=0)
@@ -282,7 +282,7 @@ if __name__ == "__main__":
     #     print(f"indexed_labels: {indexed_labels}")
     #     print(f"orig_to_tok_map: {orig_to_tok_map}")
     #     break
-
+    
     cohort_train_dataset = prepare_cohort_dataset(tokenizer, args)
     train_cohort_sampler = RandomSampler(cohort_train_dataset)
     train_cohort_dataloader = DataLoader(cohort_train_dataset, sampler=train_cohort_sampler, batch_size=1)
