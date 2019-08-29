@@ -1,4 +1,5 @@
 import os
+import json
 import spacy
 import torch
 
@@ -51,70 +52,30 @@ COHORT_DISEASE_CONSTANTS = {
 
 MAX_COHORT_NUM_SENTS = 256 # number of sentences in chart
 
+class CohortDataset(torch.utils.data.Dataset):
+    def __init__(self, data_path):
+        self.file_list = os.listdir(data_path)
+        self.file_list = [os.path.join(data_path, file_name) for file_name in self.file_list]
+
+    def __len__(self):
+        return len(self.file_list)
+
+    def __getitem__(self, index):
+        file_name = self.file_list[index]
+
+        with open(file_name) as open_file:
+            read_file = json.loads(open_file.read())
+        input_ids = torch.LongTensor(read_file['input_ids'])
+        attn_mask = torch.LongTensor(read_file['attn_mask'])
+        labels = torch.LongTensor(read_file['labels'])
+        return input_ids, attn_mask, labels
 
 def prepare_cohort_dataset(tokenizer, args, is_train=True):
     nlp = spacy.load("en_core_sci_md")
-    data_path = os.path.join(args.dataset_folder, "diabetes_data")
+    data_path = os.path.join(args.dataset_folder, "diabetes_data", "preprocessed")
     
-    #charts format: test_charts[chart_id] = text # format
-    inputs_preprocessed = read_charts(data_path)
-    
-    #labels format: test_labels[chart_id][disease_name] = judgement # format
-    labels_preprocessed = read_labels(data_path)
-    
-    inputs_list = []
-    inputs_ids = []
-    inputs_padded = []
-    attention_masks = []
-    
-    labels_list = []
-    labels_ids = []
-    labels_tensorized = []
 
-    if is_train: 
-        inputs = inputs_preprocessed[0]
-        labels = labels_preprocessed[0]
-    else: 
-        inputs = inputs_preprocessed[1]
-        labels = labels_preprocessed[1] 
-
-    chart_ids = list(labels.keys())
-    
-    max_sent_len = 512
-
-    for chart_id in tqdm(chart_ids):
-        chart = inputs[chart_id]
-        label = labels[chart_id]
-
-        doc = nlp(chart)
-
-        sentence_list = [sentence for sentence in list(doc.sents)]
-        sentence_list = sentence_list[:MAX_COHORT_NUM_SENTS] # clip
-        token_list = [[str(token) for token in sentence] for sentence in sentence_list]
-
-        num_extra_sentences = MAX_COHORT_NUM_SENTS - len(token_list)
-        for i in range(num_extra_sentences):
-            sentence_padding = [CONSTANTS['PAD']] * max_sent_len
-            token_list.append(sentence_padding)
-        
-        token_ids, attention_mask, _, indexed_labels = \
-            index_pad_mask_bert_tokens(token_list, tokenizer, tag_to_idx=COHORT_DISEASE_CONSTANTS)
-        inputs_padded.append(token_ids.unsqueeze(0))
-        attention_masks.append(attention_mask.unsqueeze(0))
-
-        labels_array = torch.zeros(16)
-
-        for disease, judgement in label.items():
-            judgement = COHORT_LABEL_CONSTANTS[judgement]
-            labels_array[COHORT_DISEASE_CONSTANTS[disease]] = judgement
-
-        labels_tensorized.append(labels_array.unsqueeze(0).long())
-        
-    inputs_padded = torch.cat(inputs_padded, dim=0)
-    attention_masks = torch.cat(attention_masks, dim=0)
-    labels_tensorized = torch.cat(labels_tensorized, dim=0)
-
-    return TensorDataset(inputs_padded, attention_masks, labels_tensorized)
+    return CohortDataset(data_path)
     
 def prepare_deid_dataset(tokenizer, args, is_train=True):
     conll_parser = ConllCorpusReader(args.dataset_folder, '.conll', ('words', 'pos'))
@@ -286,6 +247,10 @@ if __name__ == "__main__":
     cohort_train_dataset = prepare_cohort_dataset(tokenizer, args)
     train_cohort_sampler = RandomSampler(cohort_train_dataset)
     train_cohort_dataloader = DataLoader(cohort_train_dataset, sampler=train_cohort_sampler, batch_size=1)
+    for i, data_batch in enumerate(train_cohort_dataloader):
+        print(i)
+        print(data_batch)
+        quit()
 
 
 
