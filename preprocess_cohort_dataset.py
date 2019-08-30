@@ -1,6 +1,7 @@
 import os
 import json
 import spacy
+import random
 import torch
 
 import numpy as np
@@ -13,7 +14,7 @@ from preprocess_cohort import read_charts, read_labels
 from pytorch_transformers import BertTokenizer
 
 
-def prepare_cohort_dataset(tokenizer, args, is_train=True):
+def prepare_cohort_dataset(tokenizer, args):
     nlp = spacy.load("en_core_sci_md")
     data_path = os.path.join(args.dataset_folder, "diabetes_data")
     
@@ -23,7 +24,7 @@ def prepare_cohort_dataset(tokenizer, args, is_train=True):
     #labels format: test_labels[chart_id][disease_name] = judgement # format
     labels_preprocessed = read_labels(data_path)
 
-    if is_train: 
+    if args.type == "train" or args.type == "valid": 
         inputs = inputs_preprocessed[0]
         labels = labels_preprocessed[0]
     else: 
@@ -34,6 +35,15 @@ def prepare_cohort_dataset(tokenizer, args, is_train=True):
     
     max_sent_len = 512
 
+    split = int(len(chart_ids) * 0.8)
+    print(f"total data {len(chart_ids)}")
+    if args.type == "train":
+        chart_ids = chart_ids[:split]
+        print(f"train split {len(chart_ids)}")
+    elif args.type == "valid":
+        chart_ids = chart_ids[split:]
+        print(f"valid split {len(chart_ids)}")
+
     for chart_id in tqdm(chart_ids):
         chart = inputs[chart_id]
         label = labels[chart_id]
@@ -43,11 +53,13 @@ def prepare_cohort_dataset(tokenizer, args, is_train=True):
         sentence_list = [sentence for sentence in list(doc.sents)]
         sentence_list = sentence_list[:MAX_COHORT_NUM_SENTS] # clip
         token_list = [[str(token) for token in sentence] for sentence in sentence_list]
+        token_list, _, _, _ = wordpiece_tokenize_sents(token_list, tokenizer)
 
-        num_extra_sentences = MAX_COHORT_NUM_SENTS - len(token_list)
-        for i in range(num_extra_sentences):
-            sentence_padding = [CONSTANTS['PAD']] * max_sent_len
-            token_list.append(sentence_padding)
+        # no more sentence padding
+        # num_extra_sentences = MAX_COHORT_NUM_SENTS - len(token_list)
+        # for i in range(num_extra_sentences):
+        #     sentence_padding = [CONSTANTS['PAD']] * max_sent_len
+        #     token_list.append(sentence_padding)
         
         token_ids, attention_mask, _, indexed_labels = \
             index_pad_mask_bert_tokens(token_list, tokenizer, tag_to_idx=COHORT_DISEASE_CONSTANTS)
@@ -64,7 +76,7 @@ def prepare_cohort_dataset(tokenizer, args, is_train=True):
             "labels": labels_array.tolist()
         }
 
-        with open(os.path.join(data_path, "preprocessed") + f"/{chart_id}.json", 'w') as open_file:
+        with open(os.path.join(data_path, "preprocessed", args.type) + f"/{chart_id}.json", 'w') as open_file:
             open_file.write(json.dumps(chart_data))
         
 
@@ -197,8 +209,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset_folder", default=None, type=str, required=True,
                         help="De-id and co-hort identification data directory")
-    parser.add_argument("--train_batch_size", default=16, type=int,
-                        help="train batch size")
+    parser.add_argument("--type", default='train', type=str,
+                        help="train valid test")
     args = parser.parse_args()
 
     bert_type = "bert-base-cased"

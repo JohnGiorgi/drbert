@@ -15,6 +15,26 @@ COHORT_LABEL_CONSTANTS = {
     'Y': 3,
 }
 
+COHORT_DISEASE_LIST = [
+    'Obesity',
+    'Diabetes',
+    'Hypercholesterolemia',
+    'Hypertriglyceridemia',
+    'Hypertension',
+    'CAD',
+    'CHF',
+    'PVD',
+    'Venous Insufficiency',
+    'OA',
+    'OSA',
+    'Asthma',
+    'GERD',
+    'Gallstones',
+    'Depression',
+    'Gout'
+]
+
+
 COHORT_DISEASE_CONSTANTS = {
     'Obesity': 0,
     'Diabetes': 1,

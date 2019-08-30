@@ -15,8 +15,6 @@ from constants import *
 from pytorch_transformers import BertTokenizer
 
 
-
-
 class CohortDataset(torch.utils.data.Dataset):
     def __init__(self, data_path):
         self.file_list = os.listdir(data_path)
@@ -35,32 +33,44 @@ class CohortDataset(torch.utils.data.Dataset):
         labels = torch.LongTensor(read_file['labels'])
         return input_ids, attn_mask, labels
 
-def prepare_cohort_dataset(tokenizer, args, is_train=True):
+def prepare_cohort_dataset(tokenizer, args):
     nlp = spacy.load("en_core_sci_md")
-    data_path = os.path.join(args.dataset_folder, "diabetes_data", "preprocessed")
+    train_data_path = os.path.join(args.dataset_folder, "diabetes_data", "preprocessed", "train")
+    valid_data_path = os.path.join(args.dataset_folder, "diabetes_data", "preprocessed", "valid")
+    test_data_path = os.path.join(args.dataset_folder, "diabetes_data", "preprocessed", "test")
     
+    train_cohort_dataset = CohortDataset(train_data_path)
+    valid_cohort_dataset = CohortDataset(valid_data_path)
+    test_cohort_dataset = CohortDataset(test_data_path)
 
-    return CohortDataset(data_path)
+    all_dataset = {
+        'train': train_cohort_dataset,
+        'valid': valid_cohort_dataset,
+        'test': test_cohort_dataset
+    }
+
+    return all_dataset
     
-def prepare_deid_dataset(tokenizer, args, is_train=True):
+def prepare_deid_dataset(tokenizer, args):
     conll_parser = ConllCorpusReader(args.dataset_folder, '.conll', ('words', 'pos'))
-    if is_train:
-        data_file = "train.tsv"
-    else:
-        data_file = "test.tsv"
-    sents = list(conll_parser.sents(data_file))
-    tagged_sents = list(conll_parser.tagged_sents(data_file))
-    max_sent_len = 512 if is_train else None
 
-    assert len(sents) == len(tagged_sents)
+    type_list = ["train","valid","test"]
+    all_dataset = dict.fromkeys(type_list)
+    for data_type in tqdm(type_list):
+        data_file = os.path.join("deid_data", data_type + ".tsv")
+        sents = list(conll_parser.sents(data_file))
+        tagged_sents = list(conll_parser.tagged_sents(data_file))
+        max_sent_len = 512 if data_type == "train" else None
 
-    bert_tokens, orig_to_tok_map, bert_labels, tag_to_idx = wordpiece_tokenize_sents(sents, tokenizer, tagged_sents)
+        assert len(sents) == len(tagged_sents)
 
-    indexed_tokens, attention_mask, orig_to_tok_map, indexed_labels = \
-        index_pad_mask_bert_tokens(bert_tokens, tokenizer, maxlen=max_sent_len, labels=bert_labels, orig_to_tok_map=orig_to_tok_map, tag_to_idx=tag_to_idx)
+        bert_tokens, orig_to_tok_map, bert_labels, tag_to_idx = wordpiece_tokenize_sents(sents, tokenizer, tagged_sents)
 
-    return TensorDataset(indexed_tokens, attention_mask, indexed_labels, orig_to_tok_map)
+        indexed_tokens, attention_mask, orig_to_tok_map, indexed_labels = \
+            index_pad_mask_bert_tokens(bert_tokens, tokenizer, maxlen=max_sent_len, labels=bert_labels, orig_to_tok_map=orig_to_tok_map, tag_to_idx=tag_to_idx)
 
+        all_dataset[data_type] = TensorDataset(indexed_tokens, attention_mask, indexed_labels, orig_to_tok_map)
+    return all_dataset
 
 def wordpiece_tokenize_sents(tokens, tokenizer, sentence_labels=None):
     """Tokenizes pre-tokenized text for use with a BERT-based model.
@@ -198,24 +208,26 @@ if __name__ == "__main__":
     bert_type = "bert-base-cased"
     tokenizer = BertTokenizer.from_pretrained(bert_type)
 
-    # deid_train_dataset = prepare_deid_dataset(tokenizer, args, is_train=True)
-    # train_deid_sampler = RandomSampler(deid_train_dataset)
-    # train_deid_dataloader = DataLoader(deid_train_dataset, sampler=train_deid_sampler, batch_size=args.train_batch_size)
-    # for step, (indexed_tokens, attention_mask, indexed_labels, orig_to_tok_map) in enumerate(train_deid_dataloader):
-    #     print(f"step: {step}")
-    #     print(f"indexed_tokens: {indexed_tokens}")
-    #     print(f"attention_mask: {attention_mask}")
-    #     print(f"indexed_labels: {indexed_labels}")
-    #     print(f"orig_to_tok_map: {orig_to_tok_map}")
-    #     break
+    deid_dataset = prepare_deid_dataset(tokenizer, args)
+    deid_train_dataset = deid_dataset['train']
+    train_deid_sampler = RandomSampler(deid_train_dataset)
+    train_deid_dataloader = DataLoader(deid_train_dataset, sampler=train_deid_sampler, batch_size=args.train_batch_size)
+    for step, (indexed_tokens, attention_mask, indexed_labels, orig_to_tok_map) in enumerate(train_deid_dataloader):
+        print(f"step: {step}")
+        print(f"indexed_tokens: {indexed_tokens}")
+        print(f"attention_mask: {attention_mask}")
+        print(f"indexed_labels: {indexed_labels}")
+        print(f"orig_to_tok_map: {orig_to_tok_map}")
+        break
     
-    cohort_train_dataset = prepare_cohort_dataset(tokenizer, args)
-    train_cohort_sampler = RandomSampler(cohort_train_dataset)
-    train_cohort_dataloader = DataLoader(cohort_train_dataset, sampler=train_cohort_sampler, batch_size=1)
-    for i, data_batch in enumerate(train_cohort_dataloader):
-        print(i)
-        print(data_batch)
-        quit()
+    # cohort_train_datasets = prepare_cohort_dataset(tokenizer, args)
+    # train_datasets = cohort_train_datasets['train']
+    # train_cohort_sampler = RandomSampler(train_datasets)
+    # train_cohort_dataloader = DataLoader(train_datasets, sampler=train_cohort_sampler, batch_size=1)
+    # for i, data_batch in enumerate(train_cohort_dataloader):
+    #     print(i)
+    #     print(data_batch)
+    #     quit()
 
 
 
