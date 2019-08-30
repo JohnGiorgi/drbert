@@ -11,12 +11,13 @@ from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm, trange
 
-from pytorch_transformers import AdamW, AutoTokenizer, WarmupLinearSchedule
+from pytorch_transformers import AdamW, AutoTokenizer, AutoConfig, WarmupLinearSchedule
 from pytorch_transformers.modeling_utils import WEIGHTS_NAME
 from tensorboardX import SummaryWriter
 
-from . import data_utils
-from .model import BertForJointDeIDAndCohortID
+import data_utils
+from constants import *
+from model import BertForJointDeIDAndCohortID
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +50,7 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
     if args.local_rank in [-1, 0]:
         tb_writer = SummaryWriter()
 
-    args.train_batch_size = args.per_gpu_train_batch_size * max(1, args.n_gpu)
+    # args.train_batch_size = args.per_gpu_train_batch_size * max(1, args.n_gpu)
 
     deid_sampler = (RandomSampler(deid_dataset['train']) if args.local_rank == -1
                     else DistributedSampler(deid_dataset['train']))
@@ -95,7 +96,7 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
     logger.info("***** Running training *****")
     logger.info("  Num examples = %d", len(deid_dataloader) + len(cohort_dataloader))
     logger.info("  Num Epochs = %d", args.num_train_epochs)
-    logger.info("  Instantaneous batch size per GPU = %d", args.per_gpu_train_batch_size)
+    # logger.info("  Instantaneous batch size per GPU = %d", args.per_gpu_train_batch_size)
     logger.info("  Total train batch size (w. parallel, distributed & accumulation) = %d",
                 (args.train_batch_size * args.gradient_accumulation_steps *
                  torch.distributed.get_world_size() if args.local_rank != -1 else 1)
@@ -118,8 +119,13 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
         for step, (deid_batch, cohort_batch) in enumerate(epoch_iterator):
             model.train()
 
-            batch = [deid_batch, cohort_batch]
-            for batch in random.choice(batch):
+            cohort_batch[0] = cohort_batch[0].squeeze(0)
+            cohort_batch[1] = cohort_batch[1].squeeze(0)
+            cohort_batch[2] = cohort_batch[2].squeeze(0)
+
+            batch_pair = [deid_batch, cohort_batch]
+            random.shuffle(batch_pair)
+            for batch in batch_pair:
                 batch = tuple(t.to(args.device) for t in batch)
                 # TODO (Nick, Gary): Make sure both dataloader return objects in this order
                 inputs = {'input_ids':      batch[0],
@@ -272,11 +278,15 @@ def main():
     parser.add_argument("--dataset_folder", default=None, type=str, required=True,
                         help="De-id and co-hort identification data directory")
     parser.add_argument("--model_name_or_path", default=None, type=str, required=True,
-                        help="Path to pre-trained model or shortcut name selected in the list: " + ", ".join(ALL_MODELS))
+                        help="Path to pre-trained model or shortcut name.")
     parser.add_argument("--output_dir", default=None, type=str, required=True,
                         help="The output directory where the model checkpoints and predictions will be written.")
 
     # Other parameters
+    parser.add_argument("--config_name", default="", type=str,
+                        help="Pretrained config name or path if not the same as model_name")
+    parser.add_argument("--tokenizer_name", default="", type=str,
+                        help="Pretrained tokenizer name or path if not the same as model_name")
     parser.add_argument("--max_seq_length", default=384, type=int,
                         help="The maximum total input sequence length after WordPiece tokenization. Sequences "
                              "longer than this will be truncated, and sequences shorter than this will be padded.")
@@ -371,8 +381,19 @@ def main():
     if args.local_rank not in [-1, 0]:
         torch.distributed.barrier()  # Make sure only the first process in distributed training will download model & vocab
 
-    config = AutoConfig.from_pretrained(args.config_name if args.config_name else args.model_name_or_path)
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name if args.tokenizer_name else args.model_name_or_path)
+    config = AutoConfig.from_pretrained(args.config_name if args.config_name else args.model_name_or_path)
+
+    # Process the data
+    deid_dataset = data_utils.prepare_deid_dataset(args, tokenizer)
+    cohort_dataset = data_utils.prepare_cohort_dataset(args, tokenizer)
+
+    # TODO: Come up with a much better scheme for this
+    config.__dict__['num_deid_labels'] = torch.unique(deid_dataset['train'].indexed_labels).size(0)
+    config.__dict__['num_cohort_disease'] = len(COHORT_LABEL_CONSTANTS)
+    config.__dict__['num_cohort_classes'] = len(COHORT_DISEASE_LIST)
+    config.__dict__['cohort_ffnn_size'] = 512
+
     model = BertForJointDeIDAndCohortID.from_pretrained(
         pretrained_model_name_or_path=args.model_name_or_path,
         config=config
@@ -387,10 +408,6 @@ def main():
 
     # Training
     if args.do_train:
-        # TODO: These should be dictionaries keyed by partition
-        deid_dataset = data_utils.prepare_deid_dataset(tokenizer, args)
-        cohort_dataset = data_utils.prepare_cohort_dataset(tokenizer, args)
-
         global_step, tr_loss = train(args, deid_dataset, cohort_dataset, model, tokenizer)
         logger.info(" global_step = %s, average loss = %s", global_step, tr_loss)
 
