@@ -114,14 +114,16 @@ if __name__ == "__main__":
         print(f"orig_to_tok_map: {orig_to_tok_map}")
         break
     
-    # cohort_train_datasets = prepare_cohort_dataset(tokenizer, args)
-    # train_datasets = cohort_train_datasets['train']
-    # train_cohort_sampler = RandomSampler(train_datasets)
-    # train_cohort_dataloader = DataLoader(train_datasets, sampler=train_cohort_sampler, batch_size=1)
-    # for i, data_batch in enumerate(train_cohort_dataloader):
-    #     print(i)
-    #     print(data_batch)
-    #     quit()
+    cohort_train_datasets = prepare_cohort_dataset(tokenizer, args)
+    train_datasets = cohort_train_datasets['train']
+    train_cohort_sampler = RandomSampler(train_datasets)
+    train_cohort_dataloader = DataLoader(train_datasets, sampler=train_cohort_sampler, batch_size=1)
+    for i, (input_ids, attn_mask, labels) in enumerate(train_cohort_dataloader):
+        print(i)
+        print(input_ids)
+        print(attn_mask)
+        print(labels)
+        quit()
 
 
 
