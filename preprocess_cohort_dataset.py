@@ -33,7 +33,7 @@ def prepare_cohort_dataset(tokenizer, args):
 
     chart_ids = list(labels.keys())
     
-    max_sent_len = 512
+    max_sent_len = args.max_seq_len
 
     split = int(len(chart_ids) * 0.8)
     print(f"total data {len(chart_ids)}")
@@ -211,6 +211,8 @@ if __name__ == "__main__":
                         help="De-id and co-hort identification data directory")
     parser.add_argument("--type", default='train', type=str,
                         help="train valid test")
+    parser.add_argument("--max_seq_len", default=512, type=int,
+                        help="max seq len")
     args = parser.parse_args()
 
     bert_type = "bert-base-cased"

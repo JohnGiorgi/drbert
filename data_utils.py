@@ -28,12 +28,14 @@ class CohortDataset(torch.utils.data.Dataset):
 
         with open(file_name) as open_file:
             read_file = json.loads(open_file.read())
+
         input_ids = torch.LongTensor(read_file['input_ids'])
         attn_mask = torch.LongTensor(read_file['attn_mask'])
         labels = torch.LongTensor(read_file['labels'])
+
         return input_ids, attn_mask, labels
 
-def prepare_cohort_dataset(tokenizer, args):
+def prepare_cohort_dataset(args, tokenizer):
     nlp = spacy.load("en_core_sci_md")
     train_data_path = os.path.join(args.dataset_folder, "diabetes_data", "preprocessed", "train")
     valid_data_path = os.path.join(args.dataset_folder, "diabetes_data", "preprocessed", "valid")
@@ -50,7 +52,7 @@ def prepare_cohort_dataset(tokenizer, args):
     }
 
     return all_dataset
-    
+
 class DeidDataset(torch.utils.data.Dataset):
     def __init__(self, data_file):
         self.data_file = data_file
@@ -63,7 +65,7 @@ class DeidDataset(torch.utils.data.Dataset):
         self.indexed_labels = torch.LongTensor(read_file["indexed_labels"])
 
     def __len__(self):
-        return len(self.indexed_tokens)
+        return self.indexed_tokens.size(0)
 
     def __getitem__(self, index):
         token_ids = self.indexed_tokens[index]
@@ -72,7 +74,7 @@ class DeidDataset(torch.utils.data.Dataset):
         labels_idx = self.indexed_labels[index]
         return token_ids, attn_mask, orig_tok_map, labels_idx
 
-def prepare_deid_dataset(tokenizer, args):
+def prepare_deid_dataset(args, tokenizer):
     train_data_path = os.path.join(args.dataset_folder, "deid_data", "preprocessed", "train")
     valid_data_path = os.path.join(args.dataset_folder, "deid_data", "preprocessed", "valid")
     test_data_path = os.path.join(args.dataset_folder, "deid_data", "preprocessed", "test")
@@ -113,7 +115,7 @@ if __name__ == "__main__":
         print(f"indexed_labels: {indexed_labels}")
         print(f"orig_to_tok_map: {orig_to_tok_map}")
         break
-    
+
     cohort_train_datasets = prepare_cohort_dataset(tokenizer, args)
     train_datasets = cohort_train_datasets['train']
     train_cohort_sampler = RandomSampler(train_datasets)
@@ -124,18 +126,6 @@ if __name__ == "__main__":
         print(attn_mask)
         print(labels)
         quit()
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
