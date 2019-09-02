@@ -7,15 +7,16 @@ from itertools import zip_longest
 
 import numpy as np
 import torch
+from pytorch_transformers import (AdamW, AutoConfig, AutoTokenizer,
+                                  WarmupLinearSchedule)
+from pytorch_transformers.modeling_utils import WEIGHTS_NAME
+from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm, trange
 
-from pytorch_transformers import AdamW, AutoTokenizer, AutoConfig, WarmupLinearSchedule
-from pytorch_transformers.modeling_utils import WEIGHTS_NAME
-from tensorboardX import SummaryWriter
-
 import data_utils
+import eval_utils
 from constants import *
 from model import BertForJointDeIDAndCohortID
 
@@ -49,8 +50,6 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
     """
     if args.local_rank in [-1, 0]:
         tb_writer = SummaryWriter()
-
-    # args.train_batch_size = args.per_gpu_train_batch_size * max(1, args.n_gpu)
 
     deid_sampler = (RandomSampler(deid_dataset['train']) if args.local_rank == -1
                     else DistributedSampler(deid_dataset['train']))
@@ -194,29 +193,28 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
 
 
 def evaluate(args, model, tokenizer, dataset, task="deid"):
-    raise NotImplementedError
     if not os.path.exists(args.output_dir) and args.local_rank in [-1, 0]:
         os.makedirs(args.output_dir)
 
-    args.eval_batch_size = args.per_gpu_eval_batch_size * max(1, args.n_gpu)
-
     eval_dataloader = {}
 
+    # batch_size hardcoded to 1 for cohort task because these sentences are grouped by document
+    batch_size = args.eval_batch_size if task == 'deid' else 1
+
     for partition in dataset:
-        sampler = (SequentialSampler(dataset['partition']) if args.local_rank == -1
+        sampler = (SequentialSampler(dataset[partition]) if args.local_rank == -1
                    # Note that DistributedSampler samples randomly
                    else DistributedSampler(dataset['partition']))
         eval_dataloader[partition] = \
-            DataLoader(dataset['partition'], sampler=sampler, batch_size=args.eval_batch_size)
+            DataLoader(dataset[partition], sampler=sampler, batch_size=batch_size)
 
     # Eval!
     for partition, dataset in eval_dataloader.items():
         logger.info(f"***** Running {task} evaluation on {partition} *****")
         logger.info("  Num examples = %d", len(eval_dataloader))
         logger.info("  Batch size = %d", args.eval_batch_size)
-        all_results = []
 
-        labels, predictions = [], []
+        labels, predictions, orig_to_tok_map = [], [], []
         for batch in tqdm(eval_dataloader, desc="Evaluating"):
             model.eval()
             batch = tuple(t.to(args.device) for t in batch)
@@ -226,48 +224,59 @@ def evaluate(args, model, tokenizer, dataset, task="deid"):
                           'labels':         batch[2],
                           }
 
+                outputs = model(**inputs)
                 loss, logits = outputs[:2]
 
                 # Need to accumulate these for evaluation
-                predictions.append(logits)
                 labels.append[inputs['labels']]
+                predictions.append(logits.argmax(dim=-1))
+                if task == 'deid':
+                    orig_to_tok_map.append(batch[3])
 
-        # TODO: Eval goes here?
-        # Mask [PAD] and WORDPIECE tokens
-        evaluate_deid(labels, predictions, orig_to_tok_map)
-
-        # Compute predictions
-        output_prediction_file = os.path.join(args.output_dir, "predictions_{}.json".format(task))
-        output_nbest_file = os.path.join(args.output_dir, "nbest_predictions_{}.json".format(task))
+    # TODO: result need to be a dictionary of keys (corresponding to some metric) and values
+    # (corresponding to the score for that metric), e.g. {'f1': 0.76}, in order for the rest of
+    # this script to not break
+    if task == 'deid':
+        results = evaluate_deid(labels, predictions, orig_to_tok_map)
+    elif task == 'cohort':
+        results = evaluate_cohort(labels, predictions)
 
     return results
 
 
 def evaluate_deid(labels, predictions, orig_to_tok_map):
-    raise NotImplementedError
-
-    preds = logits.argmax(dim=-1)
+    # TODO (John): idx to tag and tag to idx mapping needs to be re-thought.
+    idx_to_tag = eval_utils.reverse_dict(DEID_LABELS)
 
     y_true, y_pred = [], []
-    for pred, lab, tok_map in zip(preds, labels, orig_to_tok_map):
+    for labs, preds, tok_map in zip(labels, predictions, orig_to_tok_map):
         orig_token_indices = torch.as_tensor(
-            [i for i in tok_map if i != TOK_MAP_PAD],
-            device=self.device,
-            dtype=torch.long
+            [i for i in tok_map if i != TOK_MAP_PAD], device=labels.device, dtype=torch.long
         )
 
-        masked_labels = torch.index_select(lab, -1, orig_token_indices).tolist()
-        masked_preds = torch.index_select(pred, -1, orig_token_indices).tolist()
+        masked_labels = torch.index_select(labs, -1, orig_token_indices).tolist()
+        masked_preds = torch.index_select(preds, -1, orig_token_indices).tolist()
 
         # Map predictions to tags
         # TODO:
-        y_true.append([something_that_maps_idx_to_labels for idx in masked_labels])
-        y_pred.append([something_that_maps_idx_to_labels for idx in masked_preds])
+        y_true.extend([idx_to_tag[idx] for idx in masked_labels])
+        y_pred.extend([idx_to_tag[idx] for idx in masked_preds])
 
-    return y_true, y_pred
+    scores = eval_utils.precision_recall_f1_support_sequence_labelling(y_true, y_pred)
+
+    return scores
 
 
-def evaluate_cohort(labels, predicition, orig_to_tok_map):
+# TODO (Nick).
+def evaluate_cohort(labels, predictions):
+    """Coordinates evaluation for the cohort identification task.
+    Args:
+        labels (list): A list of Tensors containing the gold labels for each example.
+        predictions (list): A list of Tensors containing the predicted labels for each example.
+
+    Returns:
+        TODO (Nick).
+    """
     raise NotImplementedError
 
 
