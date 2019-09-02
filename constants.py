@@ -1,16 +1,13 @@
-
-CONSTANTS = {
-    'SEP': '[SEP]',
-    'CLS': '[CLS]',
-    'UNK': '[UNK]',
-    'PAD': '[PAD]',
-    'TOK_MAP_PAD': -100,
-    'WORDPIECE': 'X'
-}
-
+OUTSIDE = 'O'
+SEP = '[SEP]'
+CLS = '[CLS]'
+UNK = '[UNK]'
+PAD = '[PAD]',
+TOK_MAP_PAD = -100
+WORDPIECE = 'X'
 
 DEID_TYPES = [
-    '[PAD]',
+    PAD,
     'E-AGE',
     'S-ORGANIZATION',
     'I-AGE',
@@ -93,15 +90,14 @@ DEID_TYPES = [
     'E-EMAIL',
     'I-DEVICE',
     'B-FAX',
-    '[UNK]',
-    '[CLS]',
-    '[SEP]',
+    PAD,
+    CLS,
+    SEP,
+    WORDPIECE
 ]
 
-
-
 DEID_LABELS = {
-    '[PAD]': 0,
+    PAD: 0,
     'E-AGE': 1,
     'S-ORGANIZATION': 2,
     'I-AGE': 3,
@@ -184,11 +180,11 @@ DEID_LABELS = {
     'E-EMAIL': 80,
     'I-DEVICE': 81,
     'B-FAX': 82,
-    '[UNK]': 83,
-    '[CLS]': 84,
-    '[SEP]': 85
+    UNK: 83,
+    CLS: 84,
+    SEP: 85,
+    WORDPIECE: 86
 }
-
 
 COHORT_LABEL_CONSTANTS = {
     'U': 0,
@@ -216,14 +212,13 @@ COHORT_DISEASE_LIST = [
     'Gout'
 ]
 
-
 COHORT_DISEASE_CONSTANTS = {
     'Obesity': 0,
     'Diabetes': 1,
     'Hypercholesterolemia': 2,
     'Hypertriglyceridemia': 3,
     'Hypertension': 4,
-    'CAD': 5, 
+    'CAD': 5,
     'CHF': 6,
     'PVD': 7,
     'Venous Insufficiency': 8,
@@ -236,4 +231,4 @@ COHORT_DISEASE_CONSTANTS = {
     'Gout': 15
 }
 
-MAX_COHORT_NUM_SENTS = 256 # number of sentences in chart
+MAX_COHORT_NUM_SENTS = 256  # number of sentences in chart
