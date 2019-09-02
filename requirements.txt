@@ -4,3 +4,4 @@ spacy==2.1.4
 Keras-Preprocessing==1.1.0
 nltk==3.3
 xmltodict==0.12.0
+seqeval==0.0.12
