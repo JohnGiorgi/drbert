@@ -107,7 +107,6 @@ def read_labels(data_path="data/diabetes_data"):
     return train_labels, test_labels
 
 
-
 if __name__ == "__main__":
     train_charts, test_charts = read_charts("data/diabetes_data")
     train_labels, test_labels = read_labels("data/diabetes_data")
