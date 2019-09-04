@@ -60,3 +60,15 @@ def precision_recall_f1_support_sequence_labelling(y_true, y_pred):
     scores['Micro avg'] = micro_precision, micro_recall, micro_f1, total_support
 
     return scores
+
+
+def classification_accuracy(y_true, y_pred):
+    assert len(y_true) == len(y_pred)
+    num_correct = 0
+    for i in range(len(y_true)):
+        if y_true[i] == y_pred[i]:
+            num_correct += 1
+    return num_correct / len(y_true)
+
+
+
