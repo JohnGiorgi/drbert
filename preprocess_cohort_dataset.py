@@ -60,7 +60,7 @@ def prepare_cohort_dataset(tokenizer, args):
         #     sentence_padding = [CONSTANTS['PAD']] * max_sent_len
         #     token_list.append(sentence_padding)
         token_ids, attention_mask, _, indexed_labels = \
-            index_pad_mask_bert_tokens(token_list, tokenizer, tag_to_idx=COHORT_DISEASE_CONSTANTS)
+            index_pad_mask_bert_tokens(token_list, tokenizer, maxlen=256, tag_to_idx=COHORT_DISEASE_CONSTANTS)
 
         labels_array = torch.zeros(16)
 
