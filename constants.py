@@ -5,6 +5,7 @@ UNK = '[UNK]'
 PAD = '[PAD]',
 TOK_MAP_PAD = -100
 WORDPIECE = 'X'
+BERT_MAX_SENT_LEN = 512
 
 DEID_TYPES = [
     PAD,
