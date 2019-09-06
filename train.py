@@ -296,7 +296,7 @@ def main():
                         help="Pretrained config name or path if not the same as model_name")
     parser.add_argument("--tokenizer_name", default="", type=str,
                         help="Pretrained tokenizer name or path if not the same as model_name")
-    parser.add_argument("--max_seq_length", default=384, type=int,
+    parser.add_argument("--max_seq_length", default=256, type=int,
                         help="The maximum total input sequence length after WordPiece tokenization. Sequences "
                              "longer than this will be truncated, and sequences shorter than this will be padded.")
     parser.add_argument("--do_train", action='store_true',
@@ -402,6 +402,7 @@ def main():
     config.__dict__['num_cohort_disease'] = len(COHORT_LABEL_CONSTANTS)
     config.__dict__['num_cohort_classes'] = len(COHORT_DISEASE_LIST)
     config.__dict__['cohort_ffnn_size'] = 512
+    config.__dict__['max_batch_size'] = 1
 
     model = BertForJointDeIDAndCohortID.from_pretrained(
         pretrained_model_name_or_path=args.model_name_or_path,
