@@ -20,7 +20,7 @@ def prepare_deid_dataset(args, tokenizer):
         data_file = os.path.join("deid_data", data_type + ".tsv")
         sents = list(conll_parser.sents(data_file))
         tagged_sents = list(conll_parser.tagged_sents(data_file))
-        max_sent_len = 512 if data_type == "train" else None
+        max_sent_len = 128 if data_type == "train" else None
 
         assert len(sents) == len(tagged_sents)
 

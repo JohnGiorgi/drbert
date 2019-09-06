@@ -133,7 +133,7 @@ def wordpiece_tokenize_sents(tokens, tokenizer, labels=None):
             labs_iter = iter(labs)
             bert_labels.append([])
             for i, _ in enumerate(bert_toks):
-                bert_labels[-1].extend([WORDPIECE if i not in tok_map else next(labs_iter)])
+                bert_labels[-1].extend([WORDPIECE if i not in tok_map else next(labs_iter)[1]])
 
         return bert_tokens, orig_to_tok_map, bert_labels
 
