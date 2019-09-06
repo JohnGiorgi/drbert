@@ -161,11 +161,11 @@ if __name__ == "__main__":
     print('loaded datasets')
 
     # TODO: Come up with a much better scheme for this
-    config.__dict__['num_deid_labels'] = torch.unique(deid_dataset['train'].indexed_labels).size(0)
+    config.__dict__['num_deid_labels'] = len(DEID_LABELS)
     config.__dict__['num_cohort_disease'] = len(COHORT_LABEL_CONSTANTS)
     config.__dict__['num_cohort_classes'] = len(COHORT_DISEASE_LIST)
-    config.__dict__['cohort_ffnn_size'] = 512
-    config.__dict__['max_batch_size'] = 1
+    config.__dict__['cohort_ffnn_size'] = 128
+    config.__dict__['max_batch_size'] = args.train_batch_size
 
     model = BertForJointDeIDAndCohortID.from_pretrained(
         pretrained_model_name_or_path=bert_model,
@@ -179,6 +179,9 @@ if __name__ == "__main__":
     print("starting deid")
     model.eval()
     model.cuda()
+
+    for param in model.parameters():
+        param.requires_grad = False
 
     for i, (input_ids, attn_mask, orig_tok_map, labels) in enumerate(deid_train):
         print(i)
