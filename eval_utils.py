@@ -71,4 +71,42 @@ def classification_accuracy(y_true, y_pred):
     return num_correct / len(y_true)
 
 
+def print_evaluation(evaluation, title=None):
+    """Prints an ASCII table of evaluation scores.
+    Args:
+        evaluation: A dictionary of label, score pairs where label is a class tag and
+            scores is a 4-tuple containing precision, recall, f1 and support.
+        title (str): Optional, the title of the table.
+    Preconditions:
+        Assumes the values of `evaluation` are 4-tuples, where the first three items are
+        float representaions of a percentage and the last item is an count integer.
+    """
+    # Create table, give it a title a column names
+    table = PrettyTable()
 
+    if title is not None:
+        table.title = title
+
+    table.field_names = ['Label', 'Precision', 'Recall', 'F1', 'Support']
+
+    # Column alignment
+    table.align['Label'] = 'l'
+    table.align['Precision'] = 'r'
+    table.align['Recall'] = 'r'
+    table.align['F1'] = 'r'
+    table.align['Support'] = 'r'
+
+    # Create and add the rows
+    for label, scores in evaluation.items():
+        row = [label]
+        # convert scores to formatted percentage strings
+        support = scores[-1]
+        performance_metrics = [f'{x:.2%}' for x in scores[:-1]]
+        row_scores = performance_metrics + [support]
+
+        row.extend(row_scores)
+        table.add_row(row)
+
+    print(table)
+
+    return table

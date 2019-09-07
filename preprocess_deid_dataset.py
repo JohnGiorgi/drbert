@@ -5,6 +5,7 @@ import torch
 from keras_preprocessing.sequence import pad_sequences
 from nltk.corpus.reader.conll import ConllCorpusReader
 from pytorch_transformers import BertTokenizer
+from torch.data.utils import TensorDataset
 from tqdm import tqdm
 
 from constants import *
@@ -23,8 +24,6 @@ def prepare_deid_dataset(args, tokenizer):
 
         maxlen = args.max_seq_len if data_type == "train" else BERT_MAX_SENT_LEN
 
-        assert len(sents) == len(tagged_sents)
-
         bert_tokens, orig_to_tok_map, bert_labels = \
             wordpiece_tokenize_sents(sents, tokenizer, tagged_sents)
 
@@ -41,9 +40,12 @@ def prepare_deid_dataset(args, tokenizer):
             "indexed_labels": indexed_labels.tolist()
         }
         output_file = os.path.join(args.dataset_folder, "deid_data", "preprocessed")
+
         with open(output_file + f"/{data_type}.json", 'w') as open_file:
             open_file.write(json.dumps(dataset_dict))
+    
         # all_dataset[data_type] = TensorDataset(indexed_tokens, attention_mask, indexed_labels, orig_to_tok_map)
+
     return all_dataset
 
 

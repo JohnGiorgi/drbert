@@ -14,6 +14,7 @@ from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm, trange
+from sklearn.metrics import precision_recall_fscore_support
 
 import data_utils
 import eval_utils
@@ -58,9 +59,12 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
 
     cohort_sampler = (RandomSampler(cohort_dataset['train']) if args.local_rank == -1
                       else DistributedSampler(cohort_dataset['train']))
+        
     # batch_size hardcoded to 1 because these sentences are grouped by document
     cohort_dataloader = DataLoader(cohort_dataset['train'], sampler=cohort_sampler, batch_size=1)
 
+    deid_total = len(deid_dataloader) // args.gradient_accumulation_steps * args.num_train_epochs
+    cohort_total = len(cohort_dataloader) // args.gradient_accumulation_steps * args.num_train_epochs
     t_total = ((len(deid_dataloader) + len(cohort_dataloader)) //
                args.gradient_accumulation_steps * args.num_train_epochs)
 
@@ -74,11 +78,13 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
         ]
     optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
     scheduler = WarmupLinearSchedule(optimizer, warmup_steps=args.warmup_steps, t_total=t_total)
+
     if args.fp16:
         try:
             from apex import amp
         except ImportError:
-            raise ImportError("Please install apex from https://www.github.com/nvidia/apex to use fp16 training.")
+            raise ImportError(('Please install apex from https://www.github.com/nvidia/apex to use'
+                               ' fp16 training.'))
         model, optimizer = amp.initialize(model, optimizer, opt_level=args.fp16_opt_level)
 
     # Multi-gpu training (should be after apex fp16 initialization)
@@ -104,32 +110,55 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
     logger.info("  Total optimization steps = %d", t_total)
 
     global_step = 0
-    tr_loss, logging_loss = 0.0, 0.0
+    tr_loss = {'deid': 0.0, 'cohort': 0.0}
+    logging_loss = {'deid': 0.0, 'cohort': 0.0}
+
     model.zero_grad()
+
     train_iterator = trange(int(args.num_train_epochs),
                             desc="Epoch",
-                            disable=args.local_rank not in [-1, 0])
+                            disable=args.local_rank not in [-1, 0],
+                            dynamic_ncols=True)
 
     set_seed(args)  # Added here for reproductibility (even between python 2 and 3)
 
-    for _ in train_iterator:
+    for epoch, _ in enumerate(train_iterator):
         epoch_iterator = tqdm(zip_longest(deid_dataloader, cohort_dataloader),
-                              desc="Iteration", disable=args.local_rank not in [-1, 0])
+                              unit="batch", desc="Iteration",
+                              total=t_total,
+                              disable=args.local_rank not in [-1, 0],
+                              dynamic_ncols=True)
         for step, (deid_batch, cohort_batch) in enumerate(epoch_iterator):
             model.train()
 
-            cohort_batch[0] = cohort_batch[0].squeeze(0)
-            cohort_batch[1] = cohort_batch[1].squeeze(0)
-            cohort_batch[2] = cohort_batch[2].squeeze(0)
+            # Dataloader introduces a first dimension of size one
+            if cohort_batch is not None:
+                cohort_batch[0] = cohort_batch[0].squeeze(0)
+                cohort_batch[1] = cohort_batch[1].squeeze(0)
+                cohort_batch[2] = cohort_batch[2].squeeze(0)
 
-            batch_pair = [deid_batch, cohort_batch]
+            # Training order of two tasks is chosen at random every batch
+            '''
+            batch_pair = [batch for batch in [(deid_batch, 'deid'), (cohort_batch, 'cohort')]
+                          if batch[0] is not None]
+
+            batch_pair = [batch_pair[0]]
             random.shuffle(batch_pair)
-            for batch in batch_pair:
+            '''
+
+            batch_pair = [(deid_batch, 'deid')]
+            
+            for batch, task in batch_pair:
+                if batch is None:
+                    break
+
                 batch = tuple(t.to(args.device) for t in batch)
+
                 # TODO (Nick, Gary): Make sure both dataloader return objects in this order
                 inputs = {'input_ids':      batch[0],
                           'attention_mask': batch[1],
                           'labels':         batch[2],
+                          'task':           task,
                           }
 
                 outputs = model(**inputs)
@@ -149,28 +178,30 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
                     loss.backward()
                     torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
 
-                tr_loss += loss.item()
+                tr_loss[task] += loss.item()
+
                 if (step + 1) % args.gradient_accumulation_steps == 0:
                     scheduler.step()  # Update learning rate schedule
                     optimizer.step()
                     model.zero_grad()
                     global_step += 1
 
+                    # Log metrics
                     if args.local_rank in [-1, 0] and args.logging_steps > 0 and global_step % args.logging_steps == 0:
-                        # Log metrics
                         if args.local_rank == -1 and args.evaluate_during_training:  # Only evaluate when single GPU otherwise metrics may not average well
                             deid_results = evaluate(args, model, tokenizer, deid_dataset, task='deid')
-                            cohort_results = evaluate(args, model, tokenizer, cohort_dataset, task='cohort')
+                            # cohort_results = evaluate(args, model, tokenizer, cohort_dataset, task='cohort')
+                            cohort_results = {}
                             for key, value in deid_results.items():
                                 tb_writer.add_scalar('deid_eval_{}'.format(key), value, global_step)
                             for key, value in cohort_results.items():
                                 tb_writer.add_scalar('cohort_eval_{}'.format(key), value, global_step)
                         tb_writer.add_scalar('lr', scheduler.get_lr()[0], global_step)
-                        tb_writer.add_scalar('loss', (tr_loss - logging_loss)/args.logging_steps, global_step)
-                        logging_loss = tr_loss
+                        tb_writer.add_scalar('loss', (tr_loss[task] - logging_loss[task])/args.logging_steps, global_step)
+                        logging_loss[task] = tr_loss[task]
 
+                    # Save model checkpoint
                     if args.local_rank in [-1, 0] and args.save_steps > 0 and global_step % args.save_steps == 0:
-                        # Save model checkpoint
                         output_dir = os.path.join(args.output_dir, 'checkpoint-{}'.format(global_step))
                         if not os.path.exists(output_dir):
                             os.makedirs(output_dir)
@@ -178,6 +209,15 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
                         model_to_save.save_pretrained(output_dir)
                         torch.save(args, os.path.join(output_dir, 'training_args.bin'))
                         logger.info("Saving model checkpoint to %s", output_dir)
+
+                deid_loss = tr_loss["deid"] / (deid_total * epoch + (step + 1))
+                cohort_loss = tr_loss["cohort"] / (cohort_total * epoch + (step + 1))
+
+                postfix = {'deid_loss': f'{deid_loss:.6f}',
+                           'cohort_loss': f'{cohort_loss:.6f}',
+                           'total_loss': f'{(deid_loss + cohort_loss):.6f}'
+                           }
+                epoch_iterator.set_postfix(postfix)
 
             if args.max_steps > 0 and global_step > args.max_steps:
                 epoch_iterator.close()
@@ -189,7 +229,10 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
     if args.local_rank in [-1, 0]:
         tb_writer.close()
 
-    return global_step, tr_loss / global_step
+    # Compute the average loss for each task
+    avg_loss = {key: value / global_step for key, value in tr_loss.items()}
+
+    return global_step, avg_loss
 
 
 def evaluate(args, model, tokenizer, dataset, task="deid"):
@@ -204,42 +247,46 @@ def evaluate(args, model, tokenizer, dataset, task="deid"):
     for partition in dataset:
         sampler = (SequentialSampler(dataset[partition]) if args.local_rank == -1
                    # Note that DistributedSampler samples randomly
-                   else DistributedSampler(dataset['partition']))
+                   else DistributedSampler(dataset[partition]))
         eval_dataloader[partition] = \
             DataLoader(dataset[partition], sampler=sampler, batch_size=batch_size)
 
     # Eval!
+    model.eval()
     for partition, dataset in eval_dataloader.items():
         logger.info(f"***** Running {task} evaluation on {partition} *****")
         logger.info("  Num examples = %d", len(eval_dataloader))
         logger.info("  Batch size = %d", args.eval_batch_size)
 
         labels, predictions, orig_to_tok_map = [], [], []
-        for batch in tqdm(eval_dataloader, desc="Evaluating"):
-            model.eval()
+        for batch in tqdm(dataset, desc="Evaluating"):
             batch = tuple(t.to(args.device) for t in batch)
             with torch.no_grad():
                 inputs = {'input_ids':      batch[0],
                           'attention_mask': batch[1],
                           'labels':         batch[2],
+                          'task':           task
                           }
 
                 outputs = model(**inputs)
                 loss, logits = outputs[:2]
 
                 # Need to accumulate these for evaluation
-                labels.append[inputs['labels']]
+                labels.append(inputs['labels'])
                 predictions.append(logits.argmax(dim=-1))
                 if task == 'deid':
                     orig_to_tok_map.append(batch[3])
 
-    # TODO: result need to be a dictionary of keys (corresponding to some metric) and values
-    # (corresponding to the score for that metric), e.g. {'f1': 0.76}, in order for the rest of
-    # this script to not break
-    if task == 'deid':
-        results = evaluate_deid(labels, predictions, orig_to_tok_map)
-    elif task == 'cohort':
-        results = evaluate_cohort(labels, predictions)
+        # TODO: result need to be a dictionary of keys (corresponding to some metric) and values
+        # (corresponding to the score for that metric), e.g. {'f1': 0.76}, in order for the rest of
+        # this script to not break
+        if task == 'deid':
+            results = evaluate_deid(labels, predictions, orig_to_tok_map)
+        elif task == 'cohort':
+            results = evaluate_cohort(labels, predictions)
+
+        print(results)
+        eval_utils.print_evaluation(results)
 
     return results
 
@@ -263,11 +310,11 @@ def evaluate_deid(labels, predictions, orig_to_tok_map):
         y_pred.extend([idx_to_tag[idx] for idx in masked_preds])
 
     scores = eval_utils.precision_recall_f1_support_sequence_labelling(y_true, y_pred)
+    print(scores)
 
     return scores
 
 
-# TODO (Nick).
 def evaluate_cohort(labels, predictions):
     """Coordinates evaluation for the cohort identification task.
     Args:
@@ -275,9 +322,22 @@ def evaluate_cohort(labels, predictions):
         predictions (list): A list of Tensors containing the predicted labels for each example.
 
     Returns:
-        TODO (Nick).
     """
-    raise NotImplementedError
+    assert len(labels) == len(predictions)
+    
+    #P, R, F1, support
+    # disease_dict = {value:[[],[]] for (key,value) in COHORT_DISEASE_CONSTANTS.items()}
+    # score_dict = {key: [] for (key,value) in COHORT_DISEASE_CONSTANTS.items()}
+    
+    # for prediction, label in zip(predictions, labels):
+    #     for i in range(len(prediction)): 
+    #        disease_dict[i][0].extend(label[i]) 
+    #        disease_dict[i][1].extend(prediction[i])
+
+    # for disease in disease_dict: 
+    #     precision, recall, f1, support = precision_recall_fscore_support(disease[0], disease[1])
+
+    # # return disease_dict
 
 
 def main():
@@ -322,6 +382,8 @@ def main():
                         help="Max gradient norm.")
     parser.add_argument("--num_train_epochs", default=10, type=int,
                         help="Total number of training epochs to perform.")
+    parser.add_argument("--max_steps", default=-1, type=int,
+                        help="If > 0: set total number of training steps to perform. Override num_train_epochs.")
     parser.add_argument("--warmup_steps", default=0, type=int,
                         help="Linear warmup over warmup_steps.")
     parser.add_argument("--verbose_logging", action='store_true',
@@ -398,11 +460,11 @@ def main():
     cohort_dataset = data_utils.prepare_cohort_dataset(args, tokenizer)
 
     # TODO: Come up with a much better scheme for this
-    config.__dict__['num_deid_labels'] = torch.unique(deid_dataset['train'].indexed_labels).size(0)
+    config.__dict__['num_deid_labels'] = len(DEID_LABELS)
     config.__dict__['num_cohort_disease'] = len(COHORT_LABEL_CONSTANTS)
     config.__dict__['num_cohort_classes'] = len(COHORT_DISEASE_LIST)
     config.__dict__['cohort_ffnn_size'] = 512
-    config.__dict__['max_batch_size'] = 1
+    config.__dict__['max_batch_size'] = args.train_batch_size
 
     model = BertForJointDeIDAndCohortID.from_pretrained(
         pretrained_model_name_or_path=args.model_name_or_path,

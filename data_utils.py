@@ -1,25 +1,52 @@
 import json
 import os
+import threading
+from multiprocessing import Pool
 
 import torch
 from keras_preprocessing.sequence import pad_sequences
+from nltk.corpus.reader.conll import ConllCorpusReader
 from pytorch_transformers import BertTokenizer
-from torch.utils.data import DataLoader, RandomSampler
+from torch.utils.data import DataLoader, RandomSampler, TensorDataset
 
-from constants import *
+from constants import (BERT_MAX_SENT_LEN, CLS, DEID_LABELS, PAD, SEP,
+                       TOK_MAP_PAD, WORDPIECE)
 
 
 class CohortDataset(torch.utils.data.Dataset):
     def __init__(self, data_path):
         self.file_list = os.listdir(data_path)
         self.file_list = [os.path.join(data_path, file_name) for file_name in self.file_list]
+        self.cached = [None] * len(self.file_list)
+
+        self.lock = threading.Lock()
+        pool = Pool(5)
+        pool.map_async(self._cache_items, range(len(self.file_list)))
+
+    def _cache_items(self, idx):
+        file_name = self.file_list[idx]
+        with open(file_name) as open_file:
+            read_file = json.loads(open_file.read())
+        input_ids = torch.LongTensor(read_file['input_ids'])
+        attn_mask = torch.LongTensor(read_file['attn_mask'])
+        labels = torch.LongTensor(read_file['labels'])
+        self.lock.acquire()
+        self.cached[idx] = (input_ids, attn_mask, labels)
+        self.lock.release()
+        return True
 
     def __len__(self):
         return len(self.file_list)
 
     def __getitem__(self, index):
-        file_name = self.file_list[index]
+        self.lock.acquire()
+        if self.cached[index] is not None:
+            input_ids, attn_mask, labels = self.cached[index]
+            self.lock.release()
+            return input_ids, attn_mask, labels
+        self.lock.release()
 
+        file_name = self.file_list[index]
         with open(file_name) as open_file:
             read_file = json.loads(open_file.read())
 
@@ -48,42 +75,30 @@ def prepare_cohort_dataset(args, tokenizer):
     return all_dataset
 
 
-class DeidDataset(torch.utils.data.Dataset):
-    def __init__(self, data_file):
-        self.data_file = data_file
-        with open(self.data_file + ".json") as open_file:
-            read_file = json.loads(open_file.read())
-
-        self.indexed_tokens = torch.LongTensor(read_file["indexed_tokens"])
-        self.attention_mask = torch.LongTensor(read_file["attention_mask"])
-        self.orig_to_tok_map = torch.LongTensor(read_file["orig_to_tok_map"])
-        self.indexed_labels = torch.LongTensor(read_file["indexed_labels"])
-
-    def __len__(self):
-        return self.indexed_tokens.size(0)
-
-    def __getitem__(self, index):
-        token_ids = self.indexed_tokens[index]
-        attn_mask = self.attention_mask[index]
-        orig_tok_map = self.orig_to_tok_map[index]
-        labels_idx = self.indexed_labels[index]
-        return token_ids, attn_mask, orig_tok_map, labels_idx
-
-
 def prepare_deid_dataset(args, tokenizer):
-    train_data_path = os.path.join(args.dataset_folder, "deid_data", "preprocessed", "train")
-    valid_data_path = os.path.join(args.dataset_folder, "deid_data", "preprocessed", "valid")
-    test_data_path = os.path.join(args.dataset_folder, "deid_data", "preprocessed", "test")
+    conll_parser = ConllCorpusReader(args.dataset_folder, '.conll', ('words', 'pos'))
 
-    train_deid_dataset = DeidDataset(train_data_path)
-    valid_deid_dataset = DeidDataset(valid_data_path)
-    test_deid_dataset = DeidDataset(test_data_path)
+    type_list = ["train", "valid", "test"]
+    all_dataset = dict.fromkeys(type_list)
 
-    all_dataset = {
-        'train': train_deid_dataset,
-        'valid': valid_deid_dataset,
-        'test': test_deid_dataset
-    }
+    for data_type in type_list:
+        data_file = os.path.join("deid_data", data_type + ".tsv")
+        sents = list(conll_parser.sents(data_file))
+        tagged_sents = list(conll_parser.tagged_sents(data_file))
+
+        maxlen = args.max_seq_length if data_type == "train" else BERT_MAX_SENT_LEN
+
+        bert_tokens, orig_to_tok_map, bert_labels = \
+            wordpiece_tokenize_sents(sents, tokenizer, tagged_sents)
+
+        indexed_tokens, attention_mask, orig_to_tok_map, indexed_labels = \
+            index_pad_mask_bert_tokens(
+                bert_tokens, tokenizer, maxlen=maxlen, labels=bert_labels,
+                orig_to_tok_map=orig_to_tok_map, tag_to_idx=DEID_LABELS
+            )
+
+        all_dataset[data_type] = \
+            TensorDataset(indexed_tokens, attention_mask, indexed_labels, orig_to_tok_map)
 
     return all_dataset
 
@@ -155,7 +170,7 @@ def index_pad_mask_bert_tokens(tokens,
             with be truncated, any sentence shorter than this length will be right-padded.
         labels (list): A list of lists containing token-level labels for a collection of sentences.
         orig_to_tok_map (list). A list of list mapping token indices of pre-bert-tokenized text to
-            token indices in post-bert-tokenized text.        
+            token indices in post-bert-tokenized text.
         tag_to_idx (dictionary): A dictionary mapping token-level tags/labels to unique integers.
 
     Returns:
@@ -180,7 +195,11 @@ def index_pad_mask_bert_tokens(tokens,
     indexed_tokens = torch.as_tensor(indexed_tokens)
 
     # Generate attention masks for pad values
-    attention_mask = torch.as_tensor([[float(idx > 0) for idx in sent] for sent in indexed_tokens])
+    attention_mask = torch.where(
+        indexed_tokens == tokenizer.convert_tokens_to_ids(PAD),
+        torch.zeros_like(indexed_tokens),
+        torch.ones_like(indexed_tokens)
+    )
 
     if orig_to_tok_map:
         orig_to_tok_map = pad_sequences(
@@ -242,10 +261,3 @@ if __name__ == "__main__":
         print(attn_mask)
         print(labels)
         quit()
-
-
-
-
-
-
-
