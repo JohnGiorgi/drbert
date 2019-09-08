@@ -211,6 +211,8 @@ def index_pad_mask_bert_tokens(tokens,
             value=TOK_MAP_PAD
         )
         orig_to_tok_map = torch.as_tensor(orig_to_tok_map)
+        # The map cant contain an index outside the maximum sequence length
+        orig_to_tok_map[orig_to_tok_map > maxlen] = TOK_MAP_PAD
 
     indexed_labels = None
     if labels:

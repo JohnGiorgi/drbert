@@ -25,7 +25,7 @@ class BertForJointDeIDAndCohortID(BertPreTrainedModel):
 
         # Core BERT model
         self.bert = BertModel(config)
-        self.apply(self.init_weights)
+        self.init_weights()
 
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 

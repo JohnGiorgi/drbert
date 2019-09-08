@@ -192,10 +192,12 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
                             deid_results = evaluate(args, model, tokenizer, deid_dataset, task='deid')
                             # cohort_results = evaluate(args, model, tokenizer, cohort_dataset, task='cohort')
                             cohort_results = {}
+                            ''' TODO
                             for key, value in deid_results.items():
                                 tb_writer.add_scalar('deid_eval_{}'.format(key), value, global_step)
                             for key, value in cohort_results.items():
                                 tb_writer.add_scalar('cohort_eval_{}'.format(key), value, global_step)
+                            '''
                         tb_writer.add_scalar('lr', scheduler.get_lr()[0], global_step)
                         tb_writer.add_scalar('loss', (tr_loss[task] - logging_loss[task])/args.logging_steps, global_step)
                         logging_loss[task] = tr_loss[task]
@@ -254,6 +256,8 @@ def evaluate(args, model, tokenizer, dataset, task="deid"):
     # Eval!
     model.eval()
     for partition, dataset in eval_dataloader.items():
+        if partition == 'train':
+            continue
         logger.info(f"***** Running {task} evaluation on {partition} *****")
         logger.info("  Num examples = %d", len(eval_dataloader))
         logger.info("  Batch size = %d", args.eval_batch_size)
@@ -274,14 +278,21 @@ def evaluate(args, model, tokenizer, dataset, task="deid"):
                 # Need to accumulate these for evaluation
                 labels.append(inputs['labels'])
                 predictions.append(logits.argmax(dim=-1))
+
                 if task == 'deid':
                     orig_to_tok_map.append(batch[3])
+
+        labels = torch.cat(labels)
+        predictions = torch.cat(predictions)
+
+        if orig_to_tok_map:
+            orig_to_tok_map = torch.cat(orig_to_tok_map)
 
         # TODO: result need to be a dictionary of keys (corresponding to some metric) and values
         # (corresponding to the score for that metric), e.g. {'f1': 0.76}, in order for the rest of
         # this script to not break
         if task == 'deid':
-            results = evaluate_deid(labels, predictions, orig_to_tok_map)
+            results = evaluate_deid(args, labels, predictions, orig_to_tok_map)
         elif task == 'cohort':
             results = evaluate_cohort(labels, predictions)
 
@@ -291,14 +302,15 @@ def evaluate(args, model, tokenizer, dataset, task="deid"):
     return results
 
 
-def evaluate_deid(labels, predictions, orig_to_tok_map):
+def evaluate_deid(args, labels, predictions, orig_to_tok_map):
     # TODO (John): idx to tag and tag to idx mapping needs to be re-thought.
     idx_to_tag = eval_utils.reverse_dict(DEID_LABELS)
 
     y_true, y_pred = [], []
-    for labs, preds, tok_map in zip(labels, predictions, orig_to_tok_map):
+    for labs, preds, tok_map in tqdm(zip(labels, predictions, orig_to_tok_map)):
+
         orig_token_indices = torch.as_tensor(
-            [i for i in tok_map if i != TOK_MAP_PAD], device=labels.device, dtype=torch.long
+            [i for i in tok_map if i != TOK_MAP_PAD], device=args.device, dtype=torch.long
         )
 
         masked_labels = torch.index_select(labs, -1, orig_token_indices).tolist()
@@ -310,7 +322,6 @@ def evaluate_deid(labels, predictions, orig_to_tok_map):
         y_pred.extend([idx_to_tag[idx] for idx in masked_preds])
 
     scores = eval_utils.precision_recall_f1_support_sequence_labelling(y_true, y_pred)
-    print(scores)
 
     return scores
 
