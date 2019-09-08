@@ -1,7 +1,8 @@
-import xmltodict
-import json
 import os
-from constants import *
+
+import xmltodict
+
+from .constants import COHORT_DISEASE_LIST
 
 
 def read_charts(data_path="data/diabetes_data"):
@@ -18,7 +19,7 @@ def read_charts(data_path="data/diabetes_data"):
             for i in range(len(train_data1['root']['docs']['doc'])):
                 chart_id = train_data1['root']['docs']['doc'][i]['@id']
                 text = train_data1['root']['docs']['doc'][i]['text']
-                train_charts[chart_id] = text # format
+                train_charts[chart_id] = text  # format
 
     test_charts = dict()
     test_file = os.path.join(data_path, "obesity_patient_records_test.xml")
@@ -28,9 +29,10 @@ def read_charts(data_path="data/diabetes_data"):
         for i in range(len(train_data1['root']['docs']['doc'])):
             chart_id = train_data1['root']['docs']['doc'][i]['@id']
             text = train_data1['root']['docs']['doc'][i]['text']
-            test_charts[chart_id] = text # format
+            test_charts[chart_id] = text  # format
 
     return train_charts, test_charts
+
 
 def read_labels(data_path="data/diabetes_data"):
     train_labels = dict()
@@ -48,7 +50,7 @@ def read_labels(data_path="data/diabetes_data"):
                     judgement = label_data['diseaseset']['diseases'][i]['disease'][j]['doc'][k]['@judgment']
                     if chart_id not in train_labels:
                         train_labels[chart_id] = dict.fromkeys(COHORT_DISEASE_LIST, 'N')
-                    train_labels[chart_id][disease_name] = judgement # format
+                    train_labels[chart_id][disease_name] = judgement  # format
 
     addendum_file = os.path.join(data_path, "obesity_standoff_annotations_training_addendum2.xml")
     with open(addendum_file) as open_file:
@@ -64,14 +66,14 @@ def read_labels(data_path="data/diabetes_data"):
                     chart_label = doc['@judgment']
                     if chart_id not in train_labels:
                         train_labels[chart_id] = dict.fromkeys(COHORT_DISEASE_LIST, 'N')
-                    train_labels[chart_id][disease_name] = chart_label # format
+                    train_labels[chart_id][disease_name] = chart_label  # format
             else:
                 doc = disease_docs
                 chart_id = doc['@id']
                 chart_label = doc['@judgment']
                 if chart_id not in train_labels:
                     train_labels[chart_id] = dict.fromkeys(COHORT_DISEASE_LIST, 'N')
-                train_labels[chart_id][disease_name] = chart_label # format
+                train_labels[chart_id][disease_name] = chart_label  # format
 
     addendum_file = os.path.join(data_path, "obesity_standoff_annotations_training_addendum3.xml")
     with open(addendum_file) as open_file:
@@ -89,7 +91,7 @@ def read_labels(data_path="data/diabetes_data"):
                     judgement = doc['@judgment']
                     if chart_id not in train_labels:
                         train_labels[chart_id] = dict.fromkeys(COHORT_DISEASE_LIST, 'N')
-                    train_labels[chart_id][disease_name] = judgement # format
+                    train_labels[chart_id][disease_name] = judgement  # format
 
     test_labels = dict()
     test_file = os.path.join(data_path, "obesity_standoff_annotations_test_textual.xml")
@@ -103,24 +105,5 @@ def read_labels(data_path="data/diabetes_data"):
                 judgement = label_data['diseaseset']['diseases']['disease'][i]['doc'][j]['@judgment']
                 if chart_id not in test_labels:
                     test_labels[chart_id] = dict.fromkeys(COHORT_DISEASE_LIST, 'N')
-                test_labels[chart_id][disease_name] = judgement # format
+                test_labels[chart_id][disease_name] = judgement  # format
     return train_labels, test_labels
-
-
-if __name__ == "__main__":
-    train_charts, test_charts = read_charts("data/diabetes_data")
-    train_labels, test_labels = read_labels("data/diabetes_data")
-    for chart_id, _ in train_charts.items():
-        if chart_id not in train_labels:
-            print(f"{chart_id} not in ")
-    for chart_id, _ in test_charts.items():
-        if chart_id not in test_labels:
-            print(f"{chart_id} not in ")
-
-    for chart_id, chart_labels in train_labels.items():
-        if len(chart_labels) != 16:
-            print(chart_labels)
-
-    for chart_id, chart_labels in test_labels.items():
-        if len(chart_labels) != 16:
-            print(chart_labels)

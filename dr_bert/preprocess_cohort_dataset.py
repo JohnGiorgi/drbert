@@ -1,16 +1,16 @@
 import json
 import os
-import random
 
-import numpy as np
 import spacy
 import torch
 from pytorch_transformers import BertTokenizer
 from tqdm import tqdm
 
-from constants import *
-from data_utils import index_pad_mask_bert_tokens, wordpiece_tokenize_sents
-from preprocess_cohort import read_charts, read_labels
+from .constants import (COHORT_DISEASE_CONSTANTS, COHORT_LABEL_CONSTANTS,
+                        MAX_COHORT_NUM_SENTS)
+from .preprocess_cohort import read_charts, read_labels
+from .utils.data_utils import (index_pad_mask_bert_tokens,
+                               wordpiece_tokenize_sents)
 
 
 def prepare_cohort_dataset(tokenizer, args):
@@ -32,6 +32,7 @@ def prepare_cohort_dataset(tokenizer, args):
 
     chart_ids = list(labels.keys())
 
+    # TODO (Gary, Nick): This is different than what was provided to train.py.
     max_sent_len = args.max_seq_len
 
     split = int(len(chart_ids) * 0.8)
@@ -59,6 +60,7 @@ def prepare_cohort_dataset(tokenizer, args):
         # for i in range(num_extra_sentences):
         #     sentence_padding = [CONSTANTS['PAD']] * max_sent_len
         #     token_list.append(sentence_padding)
+        # TODO (Gary, Nick): Maxlen is hardcoded. It should be whatever was provided to train.py
         token_ids, attention_mask, _, indexed_labels = \
             index_pad_mask_bert_tokens(token_list, tokenizer, maxlen=256, tag_to_idx=COHORT_DISEASE_CONSTANTS)
 

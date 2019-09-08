@@ -7,8 +7,6 @@ from pytorch_transformers import BertModel
 from pytorch_transformers.modeling_bert import BertPreTrainedModel
 from torch.nn import CrossEntropyLoss
 
-from constants import *
-
 logger = logging.getLogger(__name__)
 
 
@@ -152,90 +150,3 @@ class BertForJointDeIDAndCohortID(BertPreTrainedModel):
             loss = self.loss_fct(logits.view(*num_labels), labels.view(-1))
 
         return loss
-
-
-if __name__ == "__main__":
-    from pytorch_transformers import BertTokenizer
-    from pytorch_transformers import BertConfig
-    import data_utils
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset_folder", default=None, type=str, required=True,
-                        help="De-id and co-hort identification data directory")
-    parser.add_argument("--train_batch_size", default=16, type=int,
-                        help="train batch size")
-    args = parser.parse_args()
-
-    print(args)
-
-    bert_model = "bert-base-uncased"
-    config = BertConfig.from_pretrained(bert_model)
-    tokenizer = BertTokenizer.from_pretrained(bert_model)
-
-    # Process the data
-    deid_dataset = data_utils.prepare_deid_dataset(args, tokenizer)
-    cohort_dataset = data_utils.prepare_cohort_dataset(args, tokenizer)
-    print('loaded datasets')
-
-    # TODO: Come up with a much better scheme for this
-    config.__dict__['num_deid_labels'] = len(DEID_LABELS)
-    config.__dict__['num_cohort_disease'] = len(COHORT_LABEL_CONSTANTS)
-    config.__dict__['num_cohort_classes'] = len(COHORT_DISEASE_LIST)
-    config.__dict__['cohort_ffnn_size'] = 128
-    config.__dict__['max_batch_size'] = args.train_batch_size
-
-    model = BertForJointDeIDAndCohortID.from_pretrained(
-        pretrained_model_name_or_path=bert_model,
-        config=config
-    )
-    print('created model')
-
-    deid_train = deid_dataset['train']
-    cohort_train = cohort_dataset['train']
-
-    print("starting deid")
-    model.eval()
-    model.cuda()
-
-    for param in model.parameters():
-        param.requires_grad = False
-
-    for i, (input_ids, attn_mask, orig_tok_map, labels) in enumerate(deid_train):
-        print(i)
-        input_ids = input_ids.unsqueeze(0).cuda()
-        attn_mask = attn_mask.unsqueeze(0).cuda()
-        orig_tok_map = orig_tok_map.unsqueeze(0).cuda()
-        labels = labels.unsqueeze(0).cuda()
-        print(f"input_ids: {input_ids.shape}")
-        print(f"attn_mask: {attn_mask.shape}")
-        print(f"orig_tok_map: {orig_tok_map.shape}")
-        print(f"labels: {labels.shape}")
-
-        total_loss, deid_pred, cohort_pred = model(input_ids, attention_mask=attn_mask, labels=labels, task="deid")
-        print(f"total_loss: {total_loss}")
-        print(f"deid_pred: {deid_pred}")
-        print(f"cohort_pred: {cohort_pred}")
-
-        if i > 2:
-            break
-
-    print("starting cohort")
-    for i, (input_ids, attn_mask, labels) in enumerate(cohort_train):
-        print(i)
-        input_ids = input_ids.cuda()
-        attn_mask = attn_mask.cuda()
-        labels = labels.cuda()
-        print(f"input_ids: {input_ids.shape}")
-        print(f"attn_mask: {attn_mask.shape}")
-        print(f"labels: {labels.shape}")
-        input_ids = input_ids[:1]
-        attn_mask = attn_mask[:1]
-        labels = labels[:1]
-
-        total_loss, deid_pred, cohort_pred = model(input_ids, attention_mask=attn_mask, labels=labels, task="cohort")
-        print(f"total_loss: {total_loss}")
-        print(f"deid_pred: {deid_pred}")
-        print(f"cohort_pred: {cohort_pred}")
-
-        if i > 2:
-            break

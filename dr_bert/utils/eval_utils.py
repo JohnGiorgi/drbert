@@ -2,9 +2,10 @@ from statistics import mean
 
 from prettytable import PrettyTable
 
-from constants import OUTSIDE
 from seqeval.metrics import f1_score, precision_score, recall_score
 from seqeval.metrics.sequence_labeling import get_entities
+
+from ..constants import OUTSIDE
 
 
 def reverse_dict(mapping):

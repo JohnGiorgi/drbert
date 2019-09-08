@@ -10,16 +10,15 @@ import torch
 from pytorch_transformers import (AdamW, AutoConfig, AutoTokenizer,
                                   WarmupLinearSchedule)
 from pytorch_transformers.modeling_utils import WEIGHTS_NAME
+from sklearn.metrics import precision_recall_fscore_support
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm, trange
-from sklearn.metrics import precision_recall_fscore_support
 
-import data_utils
-import eval_utils
-from constants import *
-from model import BertForJointDeIDAndCohortID
+from .constants import TOK_MAP_PAD
+from .model import BertForJointDeIDAndCohortID
+from .utils import data_utils, eval_utils
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +58,7 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
 
     cohort_sampler = (RandomSampler(cohort_dataset['train']) if args.local_rank == -1
                       else DistributedSampler(cohort_dataset['train']))
-        
+
     # batch_size hardcoded to 1 because these sentences are grouped by document
     cohort_dataloader = DataLoader(cohort_dataset['train'], sampler=cohort_sampler, batch_size=1)
 
@@ -147,7 +146,7 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
             '''
 
             batch_pair = [(deid_batch, 'deid')]
-            
+
             for batch, task in batch_pair:
                 if batch is None:
                     break
@@ -335,17 +334,17 @@ def evaluate_cohort(labels, predictions):
     Returns:
     """
     assert len(labels) == len(predictions)
-    
-    #P, R, F1, support
+
+    # P, R, F1, support
     # disease_dict = {value:[[],[]] for (key,value) in COHORT_DISEASE_CONSTANTS.items()}
     # score_dict = {key: [] for (key,value) in COHORT_DISEASE_CONSTANTS.items()}
-    
+
     # for prediction, label in zip(predictions, labels):
-    #     for i in range(len(prediction)): 
-    #        disease_dict[i][0].extend(label[i]) 
+    #     for i in range(len(prediction)):
+    #        disease_dict[i][0].extend(label[i])
     #        disease_dict[i][1].extend(prediction[i])
 
-    # for disease in disease_dict: 
+    # for disease in disease_dict:
     #     precision, recall, f1, support = precision_recall_fscore_support(disease[0], disease[1])
 
     # # return disease_dict
@@ -517,7 +516,6 @@ def main():
         )
         tokenizer = AutoTokenizer.from_pretrained(args.output_dir, do_lower_case=args.do_lower_case)
         model.to(args.device)
-
 
     # Evaluation - we can ask to evaluate all the checkpoints (sub-directories) in a directory
     results = {}
