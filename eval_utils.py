@@ -1,10 +1,19 @@
-from seqeval.metrics import f1_score
-from seqeval.metrics import precision_score
-from seqeval.metrics import recall_score
+from statistics import mean
+
+from prettytable import PrettyTable
+
+from constants import OUTSIDE
+from seqeval.metrics import f1_score, precision_score, recall_score
 from seqeval.metrics.sequence_labeling import get_entities
 
 
-def precision_recall_f1_support_sequence_labelling(y_true, y_pred, criteria='exact'):
+def reverse_dict(mapping):
+    """Returns a dictionary composed of the reverse v, k pairs of a dictionary `mapping`.
+    """
+    return {v: k for k, v in mapping.items()}
+
+
+def precision_recall_f1_support_sequence_labelling(y_true, y_pred):
     """Compute precision, recall, f1 and support for sequence labelling tasks.
 
     For given gold (`y_true`) and predicted (`y_pred`) sequence labels, returns the precision,
@@ -32,9 +41,9 @@ def precision_recall_f1_support_sequence_labelling(y_true, y_pred, criteria='exa
 
         # TODO (John): Open a pull request to seqeval with a new function that returns all these
         # scores in one call. There is a lot of repeated computation here.
-        precision = precision_score(y_true_lab, y_pred_lab, criteria=criteria)
-        recall = recall_score(y_true_lab, y_pred_lab, criteria=criteria)
-        f1 = f1_score(y_true_lab, y_pred_lab, criteria=criteria)
+        precision = precision_score(y_true_lab, y_pred_lab)
+        recall = recall_score(y_true_lab, y_pred_lab)
+        f1 = f1_score(y_true_lab, y_pred_lab)
         support = len(set(get_entities(y_true_lab)))
 
         scores[label] = precision, recall, f1, support
@@ -45,11 +54,61 @@ def precision_recall_f1_support_sequence_labelling(y_true, y_pred, criteria='exa
     macro_f1 = mean([v[2] for v in scores.values()])
     total_support = sum([v[3] for v in scores.values()])
 
-    micro_precision = precision_score(y_true, y_pred, criteria=criteria)
-    micro_recall = recall_score(y_true, y_pred, criteria=criteria)
-    micro_f1 = f1_score(y_true, y_pred, criteria=criteria)
+    micro_precision = precision_score(y_true, y_pred)
+    micro_recall = recall_score(y_true, y_pred)
+    micro_f1 = f1_score(y_true, y_pred)
 
     scores['Macro avg'] = macro_precision, macro_recall, macro_f1, total_support
     scores['Micro avg'] = micro_precision, micro_recall, micro_f1, total_support
 
     return scores
+
+
+def classification_accuracy(y_true, y_pred):
+    assert len(y_true) == len(y_pred)
+    num_correct = 0
+    for i in range(len(y_true)):
+        if y_true[i] == y_pred[i]:
+            num_correct += 1
+    return num_correct / len(y_true)
+
+
+def print_evaluation(evaluation, title=None):
+    """Prints an ASCII table of evaluation scores.
+    Args:
+        evaluation: A dictionary of label, score pairs where label is a class tag and
+            scores is a 4-tuple containing precision, recall, f1 and support.
+        title (str): Optional, the title of the table.
+    Preconditions:
+        Assumes the values of `evaluation` are 4-tuples, where the first three items are
+        float representaions of a percentage and the last item is an count integer.
+    """
+    # Create table, give it a title a column names
+    table = PrettyTable()
+
+    if title is not None:
+        table.title = title
+
+    table.field_names = ['Label', 'Precision', 'Recall', 'F1', 'Support']
+
+    # Column alignment
+    table.align['Label'] = 'l'
+    table.align['Precision'] = 'r'
+    table.align['Recall'] = 'r'
+    table.align['F1'] = 'r'
+    table.align['Support'] = 'r'
+
+    # Create and add the rows
+    for label, scores in evaluation.items():
+        row = [label]
+        # convert scores to formatted percentage strings
+        support = scores[-1]
+        performance_metrics = [f'{x:.2%}' for x in scores[:-1]]
+        row_scores = performance_metrics + [support]
+
+        row.extend(row_scores)
+        table.add_row(row)
+
+    print(table)
+
+    return table

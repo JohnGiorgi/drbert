@@ -1,135 +1,106 @@
+import json
 import os
+import threading
+from multiprocessing import Pool
 
-import spacy
 import torch
 from keras_preprocessing.sequence import pad_sequences
 from nltk.corpus.reader.conll import ConllCorpusReader
-from torch.utils.data import TensorDataset
-
-from preprocess_cohort import read_charts, read_labels
 from pytorch_transformers import BertTokenizer
+from torch.utils.data import DataLoader, RandomSampler, TensorDataset
 
-CONSTANTS = {
-    'SEP': '[SEP]',
-    'CLS': '[CLS]',
-    'UNK': '[UNK]',
-    'PAD': '[PAD]',
-    'TOK_MAP_PAD': -100
-}
-
-COHORT_LABEL_CONSTANTS = {
-    'U': 0,
-    'Q': 1,
-    'N': 2,
-    'Y': 3,
-}
-
-COHORT_DISEASE_CONSTANTS = {
-    'Obesity': 0,
-    'Diabetes': 1,
-    'Hypercholesterolemia': 2,
-    'Hypertriglyceridemia': 3,
-    'Hypertension': 4,
-    'CAD': 5, 
-    'CHF': 6,
-    'PVD': 7,
-    'Venous Insufficiency': 8,
-    'OA': 9,
-    'OSA': 10,
-    'Asthma': 11,
-    'GERD': 12,
-    'Gallstones': 13,
-    'Depression': 14,
-    'Gout': 15
-}
+from constants import (BERT_MAX_SENT_LEN, CLS, DEID_LABELS, PAD, SEP,
+                       TOK_MAP_PAD, WORDPIECE)
 
 
-def prepare_cohort_dataset(tokenizer, is_train=True):
-    nlp = spacy.load("en_core_sci_sm")
-    base_path = os.path.dirname(os.path.abspath(__file__))
-    data_path = os.path.join(base_path, "diabetes_data")
-    
-    #charts format: test_charts[chart_id] = text # format
-    inputs_preprocessed = read_charts(data_path)
-    
-    #labels format: test_labels[chart_id][disease_name] = judgement # format
-    labels_preprocessed = read_labels(data_path)
-    
-    inputs_list = []
-    inputs_ids = []
-    inputs_padded = []
-    attention_masks = []
-    
-    labels_list = []
-    labels_ids = []
-    labels_tensorized = []
-    
-    if is_train: 
-        inputs = inputs_preprocessed[0]
-        labels = labels_preprocessed[0]
+class CohortDataset(torch.utils.data.Dataset):
+    def __init__(self, data_path):
+        self.file_list = os.listdir(data_path)
+        self.file_list = [os.path.join(data_path, file_name) for file_name in self.file_list]
+        self.cached = [None] * len(self.file_list)
 
-    else: 
-        inputs = inputs_preprocessed[1]
-        labels = labels_preprocessed[1] 
-    
-    for inputs_chart, labels_chart in zip(inputs,labels):
-        inputs_list.append(inputs[inputs_chart])
-        inputs_ids.append(inputs_chart)
-        
-        labels_list.append(labels[labels_chart])
-        labels_ids.append(labels_chart)
+        self.lock = threading.Lock()
+        pool = Pool(5)
+        pool.map_async(self._cache_items, range(len(self.file_list)))
 
-    #process inputs
-    for chart in inputs_list: 
-        max_sent_len = 250
-        doc = nlp(chart)
+    def _cache_items(self, idx):
+        file_name = self.file_list[idx]
+        with open(file_name) as open_file:
+            read_file = json.loads(open_file.read())
+        input_ids = torch.LongTensor(read_file['input_ids'])
+        attn_mask = torch.LongTensor(read_file['attn_mask'])
+        labels = torch.LongTensor(read_file['labels'])
+        self.lock.acquire()
+        self.cached[idx] = (input_ids, attn_mask, labels)
+        self.lock.release()
+        return True
 
-        sentence_list = [sentence for sentence in list(doc.sents)]
-        token_list = [[str(token) for token in sentence] for sentence in sentence_list]
+    def __len__(self):
+        return len(self.file_list)
 
-        if len(sentence_list) < max_sent_len:
-            padding_len = max_sent_len - len(sentence_list)
-            pad = [CONSTANTS['PAD'] for i in range(512)]
-            token_list += [pad for i in range(padding_len)]
-        
-        else:
-            sentence_list = sentence_list[:250]
-        
-        token_ids, attention_mask = index_pad_mask_bert_tokens(token_list, tokenizer)
-        inputs_padded.append(token_ids.unsqueeze(0))
-        attention_masks.append(attention_mask.unsqueeze(0))
+    def __getitem__(self, index):
+        self.lock.acquire()
+        if self.cached[index] is not None:
+            input_ids, attn_mask, labels = self.cached[index]
+            self.lock.release()
+            return input_ids, attn_mask, labels
+        self.lock.release()
 
-    #process labels
-    for i in range(len(labels_list)):
-        labels_array = torch.zeros(16)
+        file_name = self.file_list[index]
+        with open(file_name) as open_file:
+            read_file = json.loads(open_file.read())
 
-        for disease in COHORT_DISEASE_CONSTANTS:
-            if disease in labels_list[i]:
-                score = COHORT_LABEL_CONSTANTS[labels_list[i][disease]]
-                labels_array[COHORT_DISEASE_CONSTANTS[disease]] = score
+        input_ids = torch.LongTensor(read_file['input_ids'])
+        attn_mask = torch.LongTensor(read_file['attn_mask'])
+        labels = torch.LongTensor(read_file['labels'])
 
-        labels_tensorized.append(labels_array.unsqueeze(0))
-        
-    inputs_padded = torch.cat(inputs_padded, dim=0)
-    attention_masks = torch.cat(attention_masks, dim=0)
-    labels_tensorized = torch.cat(labels_tensorized, dim=0)
+        return input_ids, attn_mask, labels
 
-    return TensorDataset(inputs_padded, attention_masks, labels_tensorized)
-    
-def prepare_deid_dataset(tokenizer, args, is_train=True):
+
+def prepare_cohort_dataset(args, tokenizer):
+    train_data_path = os.path.join(args.dataset_folder, "diabetes_data", "preprocessed", "train")
+    valid_data_path = os.path.join(args.dataset_folder, "diabetes_data", "preprocessed", "valid")
+    test_data_path = os.path.join(args.dataset_folder, "diabetes_data", "preprocessed", "test")
+
+    train_cohort_dataset = CohortDataset(train_data_path)
+    valid_cohort_dataset = CohortDataset(valid_data_path)
+    test_cohort_dataset = CohortDataset(test_data_path)
+
+    all_dataset = {
+        'train': train_cohort_dataset,
+        'valid': valid_cohort_dataset,
+        'test': test_cohort_dataset
+    }
+
+    return all_dataset
+
+
+def prepare_deid_dataset(args, tokenizer):
     conll_parser = ConllCorpusReader(args.dataset_folder, '.conll', ('words', 'pos'))
 
-    sents = list(conll_parser.sents(args.data_file))
-    tagged_sents = list(conll_parser.tagged_sents(args.data_file))
-    max_sent_len = 512 if is_train else None
+    type_list = ["train", "valid", "test"]
+    all_dataset = dict.fromkeys(type_list)
 
-    assert len(sents) == len(tagged_sents)
+    for data_type in type_list:
+        data_file = os.path.join("deid_data", data_type + ".tsv")
+        sents = list(conll_parser.sents(data_file))
+        tagged_sents = list(conll_parser.tagged_sents(data_file))
 
-    bert_tokens, orig_to_tok_map, bert_labels, tag_to_idx = wordpiece_tokenize_sents(sents, tokenizer, tagged_sents)
+        maxlen = args.max_seq_length if data_type == "train" else BERT_MAX_SENT_LEN
 
-    indexed_tokens, orig_to_tok_map, attention_mask, indexed_labels = index_pad_mask_bert_tokens(bert_tokens, orig_to_tok_map, tokenizer, bert_labels, tag_to_idx, max_sent_len)
+        bert_tokens, orig_to_tok_map, bert_labels = \
+            wordpiece_tokenize_sents(sents, tokenizer, tagged_sents)
 
-    return TensorDataset(indexed_tokens, attention_mask, indexed_labels, orig_to_tok_map)
+        indexed_tokens, attention_mask, orig_to_tok_map, indexed_labels = \
+            index_pad_mask_bert_tokens(
+                bert_tokens, tokenizer, maxlen=maxlen, labels=bert_labels,
+                orig_to_tok_map=orig_to_tok_map, tag_to_idx=DEID_LABELS
+            )
+
+        all_dataset[data_type] = \
+            TensorDataset(indexed_tokens, attention_mask, indexed_labels, orig_to_tok_map)
+
+    return all_dataset
 
 
 def wordpiece_tokenize_sents(tokens, tokenizer, labels=None):
@@ -161,29 +132,27 @@ def wordpiece_tokenize_sents(tokens, tokenizer, labels=None):
     """
     bert_tokens = []
     orig_to_tok_map = []
-    bert_labels = []
-    tag_to_idx = dict()
+
     for sent in tokens:
-        bert_tokens.append([CONSTANTS['CLS']])
+        bert_tokens.append([CLS])
         orig_to_tok_map.append([])
         for orig_token in sent:
             orig_to_tok_map[-1].append(len(bert_tokens[-1]))
             bert_tokens[-1].extend(tokenizer.wordpiece_tokenizer.tokenize(orig_token))
-        bert_tokens[-1].append(CONSTANTS['SEP'])
+        bert_tokens[-1].append(SEP)
 
     # If labels are provided, project them onto bert_tokens
     if labels is not None:
+        bert_labels = []
         for bert_toks, labs, tok_map in zip(bert_tokens, labels, orig_to_tok_map):
             labs_iter = iter(labs)
             bert_labels.append([])
             for i, _ in enumerate(bert_toks):
-                bert_labels[-1].extend([CONSTANTS['WORDPIECE'] if i not in tok_map
-                                        else next(labs_iter)])
-        for label in labels:
-            if label not in tag_to_idx:
-                tag_to_idx[label] = len(tag_to_idx) + 1
-        tag_to_idx[CONSTANTS['WORDPIECE']] = len(tag_to_idx) + 1
-    return bert_tokens, orig_to_tok_map, bert_labels, tag_to_idx
+                bert_labels[-1].extend([WORDPIECE if i not in tok_map else next(labs_iter)[1]])
+
+        return bert_tokens, orig_to_tok_map, bert_labels
+
+    return bert_tokens, orig_to_tok_map
 
 
 def index_pad_mask_bert_tokens(tokens,
@@ -201,7 +170,7 @@ def index_pad_mask_bert_tokens(tokens,
             with be truncated, any sentence shorter than this length will be right-padded.
         labels (list): A list of lists containing token-level labels for a collection of sentences.
         orig_to_tok_map (list). A list of list mapping token indices of pre-bert-tokenized text to
-            token indices in post-bert-tokenized text.        
+            token indices in post-bert-tokenized text.
         tag_to_idx (dictionary): A dictionary mapping token-level tags/labels to unique integers.
 
     Returns:
@@ -214,66 +183,83 @@ def index_pad_mask_bert_tokens(tokens,
             tokens mapped to indices and corresponding attention masks that can be used as input to
             a BERT model.
     """
-    CONSTANTS['MAX_SENT_LEN'] = maxlen
     # Convert sequences to indices and pad
     indexed_tokens = pad_sequences(
         sequences=[tokenizer.convert_tokens_to_ids(sent) for sent in tokens],
-        maxlen=CONSTANTS['MAX_SENT_LEN'],
+        maxlen=maxlen,
         dtype='long',
         padding='post',
         truncating='post',
-        value=tokenizer.convert_tokens_to_ids([CONSTANTS['PAD']])
+        value=tokenizer.convert_tokens_to_ids(PAD)
     )
     indexed_tokens = torch.as_tensor(indexed_tokens)
 
     # Generate attention masks for pad values
-    attention_mask = torch.as_tensor([[float(idx > 0) for idx in sent] for sent in indexed_tokens])
-
-    outputs = indexed_tokens, attention_mask
+    attention_mask = torch.where(
+        indexed_tokens == tokenizer.convert_tokens_to_ids(PAD),
+        torch.zeros_like(indexed_tokens),
+        torch.ones_like(indexed_tokens)
+    )
 
     if orig_to_tok_map:
         orig_to_tok_map = pad_sequences(
             sequences=orig_to_tok_map,
-            maxlen=CONSTANTS['MAX_SENT_LEN'],
+            maxlen=maxlen,
             dtype='long',
             padding='post',
             truncating='post',
-            value=tokenizer.convert_tokens_to_ids([CONSTANTS['TOK_MAP_PAD']])
+            value=TOK_MAP_PAD
         )
         orig_to_tok_map = torch.as_tensor(orig_to_tok_map)
+        # The map cant contain an index outside the maximum sequence length
+        orig_to_tok_map[orig_to_tok_map > maxlen] = TOK_MAP_PAD
 
-        outputs = outputs + orig_to_tok_map
-
+    indexed_labels = None
     if labels:
         indexed_labels = pad_sequences(
             sequences=[[tag_to_idx[lab] for lab in sent] for sent in labels],
-            maxlen=CONSTANTS['MAX_SENT_LEN'],
+            maxlen=maxlen,
             dtype='long',
             padding="post",
             truncating="post",
-            value=tokenizer.convert_tokens_to_ids([CONSTANTS['PAD']])
+            value=tokenizer.convert_tokens_to_ids(PAD)
         )
         indexed_labels = torch.as_tensor(indexed_labels)
 
-        outputs = outputs + labels
+    return indexed_tokens, attention_mask, orig_to_tok_map, indexed_labels
 
-    return outputs
 
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_file", default=None, type=str, required=True,
+    parser.add_argument("--dataset_folder", default=None, type=str, required=True,
                         help="De-id and co-hort identification data directory")
-    parser.add_argument("--train_batch_size", default=16, type=int, required=True,
+    parser.add_argument("--train_batch_size", default=16, type=int,
                         help="train batch size")
     args = parser.parse_args()
 
     bert_type = "bert-base-cased"
     tokenizer = BertTokenizer.from_pretrained(bert_type)
-    deid_train_dataset = data_utils.prepare_deid_dataset(tokenizer, args, is_train=True)
-    cohort_train_dataset = data_utils.prepare_cohort_dataset(tokenizer, args)
-    train_deid_sampler = RandomSampler(deid_train_dataset) if args.local_rank == -1 else DistributedSampler(deid_train_dataset)
-    train_deid_dataloader = DataLoader(deid_train_dataset, sampler=train_deid_sampler, batch_size=args.train_batch_size)
 
-    train_cohort_sampler = RandomSampler(cohort_train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
-    train_cohort_dataloader = DataLoader(cohort_train_dataset, sampler=train_cohort_sampler, batch_size=1)
+    deid_dataset = prepare_deid_dataset(tokenizer, args)
+    deid_train_dataset = deid_dataset['train']
+    train_deid_sampler = RandomSampler(deid_train_dataset)
+    train_deid_dataloader = DataLoader(deid_train_dataset, sampler=train_deid_sampler, batch_size=args.train_batch_size)
+    for step, (indexed_tokens, attention_mask, indexed_labels, orig_to_tok_map) in enumerate(train_deid_dataloader):
+        print(f"step: {step}")
+        print(f"indexed_tokens: {indexed_tokens}")
+        print(f"attention_mask: {attention_mask}")
+        print(f"indexed_labels: {indexed_labels}")
+        print(f"orig_to_tok_map: {orig_to_tok_map}")
+        break
+
+    cohort_train_datasets = prepare_cohort_dataset(tokenizer, args)
+    train_datasets = cohort_train_datasets['train']
+    train_cohort_sampler = RandomSampler(train_datasets)
+    train_cohort_dataloader = DataLoader(train_datasets, sampler=train_cohort_sampler, batch_size=1)
+    for i, (input_ids, attn_mask, labels) in enumerate(train_cohort_dataloader):
+        print(i)
+        print(input_ids)
+        print(attn_mask)
+        print(labels)
+        quit()
