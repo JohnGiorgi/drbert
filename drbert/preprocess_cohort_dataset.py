@@ -15,7 +15,7 @@ from .utils.data_utils import (index_pad_mask_bert_tokens,
 
 def prepare_cohort_dataset(tokenizer, args):
     nlp = spacy.load("en_core_sci_md")
-    data_path = os.path.join(args.dataset_folder, "diabetes_data")
+    data_path = os.path.join(args.dataset_folder, "cohort")
 
     # charts format: test_charts[chart_id] = text # format
     inputs_preprocessed = read_charts(data_path)
@@ -33,6 +33,7 @@ def prepare_cohort_dataset(tokenizer, args):
     chart_ids = list(labels.keys())
 
     # TODO (Gary, Nick): This is different than what was provided to train.py.
+    # TODO (Gary, Nick): This is assigned to but never used.
     max_sent_len = args.max_seq_len
 
     split = int(len(chart_ids) * 0.8)
@@ -61,8 +62,12 @@ def prepare_cohort_dataset(tokenizer, args):
         #     sentence_padding = [CONSTANTS['PAD']] * max_sent_len
         #     token_list.append(sentence_padding)
         # TODO (Gary, Nick): Maxlen is hardcoded. It should be whatever was provided to train.py
-        token_ids, attention_mask, _, indexed_labels = \
-            index_pad_mask_bert_tokens(token_list, tokenizer, maxlen=256, tag_to_idx=COHORT_DISEASE_CONSTANTS)
+        token_ids, attention_mask, _, indexed_labels = index_pad_mask_bert_tokens(
+            tokens=token_list,
+            tokenizer=tokenizer,
+            maxlen=256,
+            tag_to_idx=COHORT_DISEASE_CONSTANTS
+        )
 
         labels_array = torch.zeros(16)
 
@@ -76,7 +81,8 @@ def prepare_cohort_dataset(tokenizer, args):
             "labels": labels_array.tolist()
         }
 
-        with open(os.path.join(data_path, "preprocessed", args.type) + f"/{chart_id}.json", 'w') as open_file:
+        filepath = os.path.join(data_path, "preprocessed", args.type) + f"/{chart_id}.json"
+        with open(filepath, 'w') as open_file:
             open_file.write(json.dumps(chart_data))
 
 

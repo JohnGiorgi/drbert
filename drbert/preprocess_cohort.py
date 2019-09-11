@@ -5,7 +5,7 @@ import xmltodict
 from .constants import COHORT_DISEASE_LIST
 
 
-def read_charts(data_path="data/diabetes_data"):
+def read_charts(data_path="data/cohort"):
 
     train_charts = dict()
     train_file_list = [
@@ -34,7 +34,7 @@ def read_charts(data_path="data/diabetes_data"):
     return train_charts, test_charts
 
 
-def read_labels(data_path="data/diabetes_data"):
+def read_labels(data_path="data/cohort"):
     train_labels = dict()
     addendum_file = os.path.join(data_path, "obesity_standoff_annotations_training.xml")
     with open(addendum_file) as open_file:

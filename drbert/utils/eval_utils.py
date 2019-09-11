@@ -76,10 +76,12 @@ def classification_accuracy(y_true, y_pred):
 
 def print_evaluation(evaluation, title=None):
     """Prints an ASCII table of evaluation scores.
+
     Args:
         evaluation: A dictionary of label, score pairs where label is a class tag and
             scores is a 4-tuple containing precision, recall, f1 and support.
         title (str): Optional, the title of the table.
+
     Preconditions:
         Assumes the values of `evaluation` are 4-tuples, where the first three items are
         float representaions of a percentage and the last item is an count integer.

@@ -1,3 +1,5 @@
+from __future__ import absolute_import, division, print_function
+
 import argparse
 import glob
 import logging
@@ -16,7 +18,7 @@ from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm, trange
 
-from .constants import TOK_MAP_PAD
+from .constants import COHORT_DISEASE_LIST, COHORT_LABEL_CONSTANTS, DEID_LABELS
 from .model import BertForJointDeIDAndCohortID
 from .utils import data_utils, eval_utils
 
@@ -31,8 +33,56 @@ def set_seed(args):
         torch.cuda.manual_seed_all(args.seed)
 
 
+# TODO (John): This should probably go into a util file
+def prepare_optimizer_and_scheduler(args, model, t_total):
+    """Returns an Adam optimizer configured for optimization of a BERT model (`model`).
+
+    Args:
+        args (ArgumentParser): Object containing objects parsed from the command line.
+        model (nn.Module): The multi-task patient note de-identification and cohort classification
+            model.
+        t_total (int): TODO.
+
+    Returns:
+        A 2-tuple containing an initialized `AdamW` optimizer and `WarmupLinearSchedule` scheduler
+        for the training of a BertForJointDeIDAndCohortID model (`model`).
+
+    References:
+        - https://raberrytv.wordpress.com/2017/10/29/pytorch-weight-decay-made-easy/
+    """
+    # These are hardcoded because Pytorch-Transformers named them to match to TF implementations
+    decay_blacklist = {'LayerNorm.bias', 'LayerNorm.weight'}
+
+    decay, no_decay = [], []
+
+    for name, param in model.named_parameters():
+        # Frozen weights
+        if not param.requires_grad:
+            continue
+        # A shape of len 1 indicates a normalization layer
+        if len(param.shape) == 1 or name.endswith('.bias') or name in decay_blacklist:
+            no_decay.append(param)
+        else:
+            decay.append(param)
+
+    grouped_parameters = [
+        {'params': no_decay, 'weight_decay': 0.0},
+        {'params': decay, 'weight_decay': args.weight_decay}
+    ]
+
+    optimizer = AdamW(grouped_parameters,
+                      lr=args.learning_rate,
+                      eps=args.adam_epsilon,
+                      correct_bias=False)
+    scheduler = WarmupLinearSchedule(optimizer,
+                                     warmup_steps=args.warmup * t_total,
+                                     t_total=t_total)
+
+    return optimizer, scheduler
+
+
 def train(args, deid_dataset, cohort_dataset, model, tokenizer):
-    """Coordinates training of a multi-task patient note deidentification and cohort classification
+    """Coordinates training of a multi-task patient note de=identification and cohort classification
     model.
 
     Args:
@@ -51,6 +101,7 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
     if args.local_rank in [-1, 0]:
         tb_writer = SummaryWriter()
 
+    # Prepare dataloaders
     deid_sampler = (RandomSampler(deid_dataset['train']) if args.local_rank == -1
                     else DistributedSampler(deid_dataset['train']))
     deid_dataloader = \
@@ -58,7 +109,6 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
 
     cohort_sampler = (RandomSampler(cohort_dataset['train']) if args.local_rank == -1
                       else DistributedSampler(cohort_dataset['train']))
-
     # batch_size hardcoded to 1 because these sentences are grouped by document
     cohort_dataloader = DataLoader(cohort_dataset['train'], sampler=cohort_sampler, batch_size=1)
 
@@ -68,15 +118,7 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
                args.gradient_accumulation_steps * args.num_train_epochs)
 
     # Prepare optimizer and schedule (linear warmup and decay)
-    no_decay = ['bias', 'LayerNorm.weight']
-    optimizer_grouped_parameters = [
-        {'params': [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)],
-         'weight_decay': args.weight_decay},
-        {'params': [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)],
-         'weight_decay': 0.0}
-        ]
-    optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
-    scheduler = WarmupLinearSchedule(optimizer, warmup_steps=args.warmup_steps, t_total=t_total)
+    optimizer, scheduler = prepare_optimizer_and_scheduler(args, model, t_total)
 
     if args.fp16:
         try:
@@ -114,7 +156,7 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
 
     model.zero_grad()
 
-    train_iterator = trange(int(args.num_train_epochs),
+    train_iterator = trange(args.num_train_epochs,
                             desc="Epoch",
                             disable=args.local_rank not in [-1, 0],
                             dynamic_ncols=True)
@@ -124,7 +166,7 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
     for epoch, _ in enumerate(train_iterator):
         epoch_iterator = tqdm(zip_longest(deid_dataloader, cohort_dataloader),
                               unit="batch", desc="Iteration",
-                              total=t_total,
+                              total=t_total // args.num_train_epochs,
                               disable=args.local_rank not in [-1, 0],
                               dynamic_ncols=True)
         for step, (deid_batch, cohort_batch) in enumerate(epoch_iterator):
@@ -180,8 +222,8 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
                 tr_loss[task] += loss.item()
 
                 if (step + 1) % args.gradient_accumulation_steps == 0:
-                    scheduler.step()  # Update learning rate schedule
                     optimizer.step()
+                    scheduler.step()  # Update learning rate schedule
                     model.zero_grad()
                     global_step += 1
 
@@ -223,6 +265,7 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
             if args.max_steps > 0 and global_step > args.max_steps:
                 epoch_iterator.close()
                 break
+
         if args.max_steps > 0 and global_step > args.max_steps:
             train_iterator.close()
             break
@@ -237,6 +280,18 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
 
 
 def evaluate(args, model, tokenizer, dataset, task="deid"):
+    """TODO.
+
+    Args:
+        args ([type]): [description]
+        model ([type]): [description]
+        tokenizer ([type]): [description]
+        dataset ([type]): [description]
+        task (str, optional): [description]. Defaults to "deid".
+
+    Returns:
+        [type]: [description]
+    """
     if not os.path.exists(args.output_dir) and args.local_rank in [-1, 0]:
         os.makedirs(args.output_dir)
 
@@ -254,15 +309,13 @@ def evaluate(args, model, tokenizer, dataset, task="deid"):
 
     # Eval!
     model.eval()
-    for partition, dataset in eval_dataloader.items():
-        if partition == 'train':
-            continue
+    for partition, dataloader in eval_dataloader.items():
         logger.info(f"***** Running {task} evaluation on {partition} *****")
-        logger.info("  Num examples = %d", len(eval_dataloader))
+        logger.info("  Num examples = %d", len(dataset[partition]))
         logger.info("  Batch size = %d", args.eval_batch_size)
 
-        labels, predictions, orig_to_tok_map = [], [], []
-        for batch in tqdm(dataset, desc="Evaluating"):
+        labels, predictions, orig_tok_mask = [], [], []
+        for batch in tqdm(dataloader, desc="Evaluating"):
             batch = tuple(t.to(args.device) for t in batch)
             with torch.no_grad():
                 inputs = {'input_ids':      batch[0],
@@ -279,46 +332,47 @@ def evaluate(args, model, tokenizer, dataset, task="deid"):
                 predictions.append(logits.argmax(dim=-1))
 
                 if task == 'deid':
-                    orig_to_tok_map.append(batch[3])
+                    orig_tok_mask.append(batch[3])
 
         labels = torch.cat(labels)
         predictions = torch.cat(predictions)
 
-        if orig_to_tok_map:
-            orig_to_tok_map = torch.cat(orig_to_tok_map)
+        if orig_tok_mask:
+            orig_tok_mask = torch.cat(orig_tok_mask)
 
         # TODO: result need to be a dictionary of keys (corresponding to some metric) and values
         # (corresponding to the score for that metric), e.g. {'f1': 0.76}, in order for the rest of
         # this script to not break
         if task == 'deid':
-            results = evaluate_deid(args, labels, predictions, orig_to_tok_map)
+            results = evaluate_deid(args, labels, predictions, orig_tok_mask)
         elif task == 'cohort':
             results = evaluate_cohort(labels, predictions)
 
-        print(results)
         eval_utils.print_evaluation(results)
 
     return results
 
 
-def evaluate_deid(args, labels, predictions, orig_to_tok_map):
-    # TODO (John): idx to tag and tag to idx mapping needs to be re-thought.
+def evaluate_deid(args, labels, predictions, orig_tok_mask):
+    """Coordinates evaluation for the de-identification task.
+
+    Args:
+        labels (list): A list of Tensors containing the gold labels for each example.
+        predictions (list): A list of Tensors containing the predicted labels for each example.
+
+    Returns:
+        dict: A dictionary of scores keyed by the labels in `labels` where each score is a 4-tuple
+            containing precision, recall, f1 and support. Additionally includes the keys
+            'Macro avg' and 'Micro avg' containing the macro and micro averages across scores.
+    """
     idx_to_tag = eval_utils.reverse_dict(DEID_LABELS)
 
-    y_true, y_pred = [], []
-    for labs, preds, tok_map in tqdm(zip(labels, predictions, orig_to_tok_map)):
+    y_true = torch.masked_select(labels, orig_tok_mask.bool())
+    y_pred = torch.masked_select(predictions, orig_tok_mask.bool())
 
-        orig_token_indices = torch.as_tensor(
-            [i for i in tok_map if i != TOK_MAP_PAD], device=args.device, dtype=torch.long
-        )
-
-        masked_labels = torch.index_select(labs, -1, orig_token_indices).tolist()
-        masked_preds = torch.index_select(preds, -1, orig_token_indices).tolist()
-
-        # Map predictions to tags
-        # TODO:
-        y_true.extend([idx_to_tag[idx] for idx in masked_labels])
-        y_pred.extend([idx_to_tag[idx] for idx in masked_preds])
+    # Map predictions to tags
+    y_true = [idx_to_tag[idx.item()] for idx in y_true]
+    y_pred = [idx_to_tag[idx.item()] for idx in y_pred]
 
     scores = eval_utils.precision_recall_f1_support_sequence_labelling(y_true, y_pred)
 
@@ -327,11 +381,15 @@ def evaluate_deid(args, labels, predictions, orig_to_tok_map):
 
 def evaluate_cohort(labels, predictions):
     """Coordinates evaluation for the cohort identification task.
+
     Args:
         labels (list): A list of Tensors containing the gold labels for each example.
         predictions (list): A list of Tensors containing the predicted labels for each example.
 
     Returns:
+        dict: A dictionary of scores keyed by the labels in `labels` where each score is a 4-tuple
+            containing precision, recall, f1 and support. Additionally includes the keys
+            'Macro avg' and 'Micro avg' containing the macro and micro averages across scores.
     """
     assert len(labels) == len(predictions)
 
@@ -355,54 +413,60 @@ def main():
 
     # Required parameters
     parser.add_argument("--dataset_folder", default=None, type=str, required=True,
-                        help="De-id and co-hort identification data directory")
+                        help="De-id and co-hort identification data directory.")
     parser.add_argument("--model_name_or_path", default=None, type=str, required=True,
                         help="Path to pre-trained model or shortcut name.")
     parser.add_argument("--output_dir", default=None, type=str, required=True,
-                        help="The output directory where the model checkpoints and predictions will be written.")
+                        help=("The output directory where the model checkpoints and predictions"
+                              " will be written."))
 
     # Other parameters
     parser.add_argument("--config_name", default="", type=str,
-                        help="Pretrained config name or path if not the same as model_name")
+                        help="Pretrained config name or path if not the same as model_name.")
     parser.add_argument("--tokenizer_name", default="", type=str,
-                        help="Pretrained tokenizer name or path if not the same as model_name")
+                        help="Pretrained tokenizer name or path if not the same as model_name.")
     parser.add_argument("--max_seq_length", default=256, type=int,
-                        help="The maximum total input sequence length after WordPiece tokenization. Sequences "
-                             "longer than this will be truncated, and sequences shorter than this will be padded.")
+                        help=("The maximum total input sequence length after WordPiece"
+                              " tokenization. Sequences longer than this will be truncated, and"
+                              " sequences shorter than this will be padded."))
     parser.add_argument("--do_train", action='store_true',
                         help="Whether to run training.")
     parser.add_argument("--do_eval", action='store_true',
                         help="Whether to run eval on the dev set.")
     parser.add_argument("--evaluate_during_training", action='store_true',
                         help="Run evaluation during training at each logging step.")
+    parser.add_argument("--do_lower_case", action='store_true',
+                        help="Set this flag if you are using an uncased model.")
 
     parser.add_argument("--train_batch_size", default=16, type=int,
-                        help="Batch size per GPU/CPU for training.")
+                        help="Total batch size to use while training.")
     parser.add_argument("--eval_batch_size", default=128, type=int,
-                        help="Batch size per GPU/CPU for evaluation.")
-    parser.add_argument("--learning_rate", default=5e-5, type=float,
+                        help="Total batch size to use while evaluating.")
+    parser.add_argument("--learning_rate", default=2e-5, type=float,
                         help="The initial learning rate for Adam.")
     parser.add_argument('--gradient_accumulation_steps', type=int, default=1,
-                        help="Number of updates steps to accumulate before performing a backward/update pass.")
-    parser.add_argument("--weight_decay", default=0.0, type=float,
-                        help="Weight deay if we apply some.")
-    parser.add_argument("--adam_epsilon", default=1e-8, type=float,
+                        help=("Number of updates steps to accumulate before performing a"
+                              " backward/update pass."))
+    parser.add_argument("--weight_decay", default=0.01, type=float,
+                        help="Weight decay if we apply some.")
+    parser.add_argument("--adam_epsilon", default=1e-6, type=float,
                         help="Epsilon for Adam optimizer.")
     parser.add_argument("--max_grad_norm", default=1.0, type=float,
                         help="Max gradient norm.")
-    parser.add_argument("--num_train_epochs", default=10, type=int,
+    parser.add_argument("--num_train_epochs", default=5, type=int,
                         help="Total number of training epochs to perform.")
     parser.add_argument("--max_steps", default=-1, type=int,
                         help="If > 0: set total number of training steps to perform. Override num_train_epochs.")
-    parser.add_argument("--warmup_steps", default=0, type=int,
-                        help="Linear warmup over warmup_steps.")
+    parser.add_argument("--warmup", default=0, type=float,
+                        help=("Proportion of training steps to perform a linear warmup of the"
+                              " learning rate."))
     parser.add_argument("--verbose_logging", action='store_true',
                         help="If true, all of the warnings related to data processing will be printed. "
                              "A number of warnings are expected for a normal evaluation.")
 
-    parser.add_argument('--logging_steps', type=int, default=50,
+    parser.add_argument('--logging_steps', type=int, default=1000,
                         help="Log every X updates steps.")
-    parser.add_argument('--save_steps', type=int, default=50,
+    parser.add_argument('--save_steps', type=int, default=1000,
                         help="Save checkpoint every X updates steps.")
     parser.add_argument("--eval_all_checkpoints", action='store_true',
                         help="Evaluate all checkpoints starting with the same prefix as model_name ending and ending with step number")
@@ -410,10 +474,8 @@ def main():
                         help="Whether not to use CUDA when available")
     parser.add_argument('--overwrite_output_dir', action='store_true',
                         help="Overwrite the content of the output directory")
-    parser.add_argument('--overwrite_cache', action='store_true',
-                        help="Overwrite the cached training and evaluation sets")
     parser.add_argument('--seed', type=int, default=42,
-                        help="random seed for initialization")
+                        help="Random seed for initialization.")
 
     parser.add_argument("--local_rank", type=int, default=-1,
                         help="local_rank for distributed training on gpus")
@@ -422,8 +484,10 @@ def main():
     parser.add_argument('--fp16_opt_level', type=str, default='O1',
                         help="For fp16: Apex AMP optimization level selected in ['O0', 'O1', 'O2', and 'O3']."
                              "See details at https://nvidia.github.io/apex/amp.html")
-    parser.add_argument('--server_ip', type=str, default='', help="Can be used for distant debugging.")
-    parser.add_argument('--server_port', type=str, default='', help="Can be used for distant debugging.")
+    parser.add_argument('--server_ip', type=str, default='',
+                        help="Can be used for distant debugging.")
+    parser.add_argument('--server_port', type=str, default='',
+                        help="Can be used for distant debugging.")
     args = parser.parse_args()
 
     if os.path.exists(args.output_dir) and os.listdir(args.output_dir) and args.do_train and not args.overwrite_output_dir:
@@ -453,28 +517,35 @@ def main():
                         datefmt='%m/%d/%Y %H:%M:%S',
                         level=logging.INFO if args.local_rank in [-1, 0] else logging.WARN)
     logger.warning("Process rank: %s, device: %s, n_gpu: %s, distributed training: %s, 16-bits training: %s",
-                    args.local_rank, device, args.n_gpu, bool(args.local_rank != -1), args.fp16)
+                   args.local_rank, device, args.n_gpu, bool(args.local_rank != -1), args.fp16)
 
     # Set seed
     set_seed(args)
 
     # Load pretrained model and tokenizer
     if args.local_rank not in [-1, 0]:
-        torch.distributed.barrier()  # Make sure only the first process in distributed training will download model & vocab
+        # Make sure only the first process in distributed training will download model & vocab
+        torch.distributed.barrier()
 
-    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name if args.tokenizer_name else args.model_name_or_path)
-    config = AutoConfig.from_pretrained(args.config_name if args.config_name else args.model_name_or_path)
+    config = AutoConfig.from_pretrained(
+        args.config_name if args.config_name else args.model_name_or_path
+    )
+    tokenizer = AutoTokenizer.from_pretrained(
+        args.tokenizer_name if args.tokenizer_name else args.model_name_or_path
+    )
 
     # Process the data
-    deid_dataset = data_utils.prepare_deid_dataset(args, tokenizer)
+    deid_dataset, deid_class_weights = data_utils.prepare_deid_dataset(args, tokenizer)
     cohort_dataset = data_utils.prepare_cohort_dataset(args, tokenizer)
 
-    # TODO: Come up with a much better scheme for this
+    # Here, we add any additional configs to the Pytorch Transformers config file. These will be
+    # saved to a `output_dir/config.json` file when we call model.save_pretrained(output_dir)
     config.__dict__['num_deid_labels'] = len(DEID_LABELS)
     config.__dict__['num_cohort_disease'] = len(COHORT_LABEL_CONSTANTS)
     config.__dict__['num_cohort_classes'] = len(COHORT_DISEASE_LIST)
     config.__dict__['cohort_ffnn_size'] = 512
     config.__dict__['max_batch_size'] = args.train_batch_size
+    config.__dict__['deid_class_weights'] = deid_class_weights
 
     model = BertForJointDeIDAndCohortID.from_pretrained(
         pretrained_model_name_or_path=args.model_name_or_path,
@@ -482,7 +553,8 @@ def main():
     )
 
     if args.local_rank == 0:
-        torch.distributed.barrier()  # Make sure only the first process in distributed training will download model & vocab
+        # Make sure only the first process in distributed training will download model & vocab
+        torch.distributed.barrier()
 
     model.to(args.device)
 
@@ -499,10 +571,11 @@ def main():
         if not os.path.exists(args.output_dir) and args.local_rank in [-1, 0]:
             os.makedirs(args.output_dir)
 
-        logger.info("Saving model checkpoint to %s", args.output_dir)
         # Save a trained model, configuration and tokenizer using `save_pretrained()`.
         # They can then be reloaded using `from_pretrained()`
-        model_to_save = model.module if hasattr(model, 'module') else model  # Take care of distributed/parallel training
+        logger.info("Saving model checkpoint to %s", args.output_dir)
+        # Take care of distributed/parallel training
+        model_to_save = model.module if hasattr(model, 'module') else model
         model_to_save.save_pretrained(args.output_dir)
         tokenizer.save_pretrained(args.output_dir)
 
@@ -522,7 +595,10 @@ def main():
     if args.do_eval and args.local_rank in [-1, 0]:
         checkpoints = [args.output_dir]
         if args.eval_all_checkpoints:
-            checkpoints = list(os.path.dirname(c) for c in sorted(glob.glob(args.output_dir + '/**/' + WEIGHTS_NAME, recursive=True)))
+            checkpoints = \
+                [os.path.dirname(c) for c in
+                 sorted(glob.glob(args.output_dir + '/**/' + WEIGHTS_NAME, recursive=True))
+                 ]
             # Reduce model loading logs
             logging.getLogger("pytorch_transformers.modeling_utils").setLevel(logging.WARN)
 
@@ -541,7 +617,8 @@ def main():
             # Evaluate
             result = evaluate(args, model, tokenizer, prefix=global_step)
 
-            result = dict((k + ('_{}'.format(global_step) if global_step else ''), v) for k, v in result.items())
+            result = {(k + ('_{}'.format(global_step) if global_step else ''), v)
+                      for k, v in result.items()}
             results.update(result)
 
     logger.info("Results: {}".format(results))

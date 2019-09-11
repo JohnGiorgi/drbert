@@ -20,6 +20,7 @@ class BertForJointDeIDAndCohortID(BertPreTrainedModel):
         self.num_cohort_classes = config.num_cohort_classes  # yes, no, unmentioned, questionable
         self.num_cohort_labels = self.num_cohort_classes * self.num_cohort_disease
         self.max_batch_size = config.max_batch_size
+        self.deid_class_weights = torch.as_tensor(config.deid_class_weights)
 
         # Core BERT model
         self.bert = BertModel(config)
@@ -38,10 +39,11 @@ class BertForJointDeIDAndCohortID(BertPreTrainedModel):
             nn.Linear(config.cohort_ffnn_size, config.cohort_ffnn_size // 2),
             nn.ReLU(),
             nn.Dropout(config.hidden_dropout_prob),
-            nn.Linear(config.cohort_ffnn_size // 2, self.num_cohort_disease * self.num_cohort_classes)
+            nn.Linear(
+                config.cohort_ffnn_size // 2,
+                self.num_cohort_disease * self.num_cohort_classes
+            )
         )
-
-        self.loss_fct = CrossEntropyLoss()
 
     def forward(self, input_ids, token_type_ids=None, attention_mask=None, labels=None,
                 position_ids=None, head_mask=None, task=None):
@@ -71,7 +73,9 @@ class BertForJointDeIDAndCohortID(BertPreTrainedModel):
                 num_labels = (-1, self.num_cohort_disease * self.num_cohort_classes)
 
             logits = outputs_[0]
-            loss = self.loss_function(logits, labels, num_labels, attention_mask)
+            loss = self.loss_function(
+                logits, labels, num_labels, attention_mask, self.deid_class_weights
+            )
             outputs = (loss, logits) + outputs
         # Otherwise, we are performing inference
         else:
@@ -124,7 +128,7 @@ class BertForJointDeIDAndCohortID(BertPreTrainedModel):
                 attention_mask=attention_mask[cur_idx: next_idx] if attention_mask is not None else attention_mask,
                 head_mask=head_mask[cur_idx: next_idx] if head_mask is not None else head_mask
             )
-            sentence_rep_sum += output[0][:, 0]
+            sentence_rep_sum += output[1]
 
             hidden_states_and_attentions.append(output[2:])
 
@@ -139,14 +143,15 @@ class BertForJointDeIDAndCohortID(BertPreTrainedModel):
 
         return outputs  # scores, (hidden_states), (attentions)
 
-    def loss_function(self, logits, labels, num_labels, attention_mask=None):
+    def loss_function(self, logits, labels, num_labels, attention_mask=None, class_weights=None):
+        loss_fct = CrossEntropyLoss(weight=class_weights.to(logits.device))
         # Only keep active parts of the loss
         if attention_mask is not None:
             active_loss = attention_mask.view(-1) == 1
             active_logits = logits.view(*num_labels)[active_loss]
             active_labels = labels.view(-1)[active_loss]
-            loss = self.loss_fct(active_logits, active_labels)
+            loss = loss_fct(active_logits, active_labels)
         else:
-            loss = self.loss_fct(logits.view(*num_labels), labels.view(-1))
+            loss = loss_fct(logits.view(*num_labels), labels.view(-1))
 
         return loss
