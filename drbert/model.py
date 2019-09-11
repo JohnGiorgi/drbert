@@ -1,5 +1,4 @@
 import logging
-import math
 
 import torch
 import torch.nn as nn
@@ -39,10 +38,7 @@ class BertForJointDeIDAndCohortID(BertPreTrainedModel):
             nn.Linear(config.cohort_ffnn_size, config.cohort_ffnn_size // 2),
             nn.ReLU(),
             nn.Dropout(config.hidden_dropout_prob),
-            nn.Linear(
-                config.cohort_ffnn_size // 2,
-                self.num_cohort_disease * self.num_cohort_classes
-            )
+            nn.Linear(config.cohort_ffnn_size // 2, self.num_cohort_labels)
         )
 
     def forward(self, input_ids, token_type_ids=None, attention_mask=None, labels=None,
@@ -50,8 +46,6 @@ class BertForJointDeIDAndCohortID(BertPreTrainedModel):
         if task not in ['deid', 'cohort'] and task is not None:
             raise ValueError(('Task must be one of "deid", "cohort" or None (for inference).'
                               'Got {task}.'))
-
-        outputs = tuple()
 
         inputs = {
             "input_ids": input_ids,
@@ -61,30 +55,27 @@ class BertForJointDeIDAndCohortID(BertPreTrainedModel):
             "head_mask": head_mask
         }
 
-        # Labels are provided, compute a loss for ONE task
+        # If labels are provided, compute a loss for ONE task
         if labels is not None:
             if task is None:
                 raise ValueError('If labels is not None, task must be one of "deid", "cohort".')
             if task == 'deid':
-                outputs_ = self._deid_forward(**inputs)
+                outputs = self._deid_forward(**inputs)
                 num_labels = (-1, self.num_deid_labels)
             elif task == 'cohort':
-                outputs_ = self._cohort_forward(**inputs)
-                num_labels = (-1, self.num_cohort_disease * self.num_cohort_classes)
+                outputs = self._cohort_forward(**inputs)
+                num_labels = (self.num_cohort_disease, self.num_cohort_classes)
+                attention_mask = None
 
-            logits = outputs_[0]
-            loss = self.loss_function(
-                logits, labels, num_labels, attention_mask, self.deid_class_weights
-            )
-            outputs = (loss, logits) + outputs
+            logits = outputs[0]
+            loss = self.loss_function(logits, labels, num_labels, attention_mask)
+            outputs = (loss, logits) + outputs[2:]
         # Otherwise, we are performing inference
         else:
             if task == 'deid':
-                outputs_ = self._deid_forward(**inputs)
-                outputs = (outputs_[0], ) + outputs
+                outputs = self._deid_forward(**inputs)
             elif task == 'cohort':
-                outputs_ = self._cohort_forward(**inputs)
-                outputs = (outputs_[0], ) + outputs
+                outputs = self._cohort_forward(**inputs)
             else:
                 deid_outputs = self._deid_forward(**inputs)
                 cohort_outputs = self._cohort_forward(**inputs)
@@ -98,8 +89,7 @@ class BertForJointDeIDAndCohortID(BertPreTrainedModel):
 
     def _deid_forward(self, input_ids, token_type_ids=None, attention_mask=None, position_ids=None,
                       head_mask=None):
-        outputs = self.bert(input_ids, position_ids=position_ids, token_type_ids=token_type_ids,
-                            attention_mask=attention_mask, head_mask=head_mask)
+        outputs = self.bert(input_ids, attention_mask=attention_mask, head_mask=head_mask)
         sequence_output = outputs[0]
 
         sequence_output = self.dropout(sequence_output)
@@ -107,44 +97,30 @@ class BertForJointDeIDAndCohortID(BertPreTrainedModel):
 
         outputs = (logits, ) + outputs[2:]  # add hidden states and attention if they are here
 
-        return outputs  # scores, (hidden_states), (attentions)
+        return outputs  # logits, (hidden_states), (attentions)
 
     def _cohort_forward(self, input_ids, token_type_ids=None, attention_mask=None,
                         position_ids=None, head_mask=None):
-        # At test time, batch size simply becomes the number of sentences in the input document
-        max_batch_size = self.max_batch_size if self.train else input_ids.size(0)
-        num_splits = math.ceil(input_ids.size(0) / max_batch_size)
-        sentence_rep_sum = 0
+        outputs = self.bert(input_ids, attention_mask=attention_mask, head_mask=head_mask)
+        cls_output = outputs[1]
 
-        hidden_states_and_attentions = []
+        # Pool outputs
+        # TODO (Gary, John): What's better empirically, sum or mean?
+        cls_output = torch.mean(cls_output, dim=0, keepdim=True)
+        cls_output = self.dropout(cls_output)
 
-        for split in range(num_splits):
-            cur_idx = split * max_batch_size
-            next_idx = (split + 1) * max_batch_size
-            output = self.bert(
-                input_ids[cur_idx: next_idx],
-                position_ids=position_ids[cur_idx: next_idx] if position_ids is not None else position_ids,
-                token_type_ids=token_type_ids[cur_idx: next_idx] if token_type_ids is not None else token_type_ids,
-                attention_mask=attention_mask[cur_idx: next_idx] if attention_mask is not None else attention_mask,
-                head_mask=head_mask[cur_idx: next_idx] if head_mask is not None else head_mask
-            )
-            sentence_rep_sum += output[1]
-
-            hidden_states_and_attentions.append(output[2:])
-
-        sentence_rep_sum = self.dropout(sentence_rep_sum)
-
-        logits = self.cohort_classifier(sentence_rep_sum)
-        outputs = (logits.view(-1, self.num_cohort_classes), )  # logits: batch size * 16 x 4
+        logits = self.cohort_classifier(cls_output)
+        logits = logits.view(self.num_cohort_disease, self.num_cohort_classes)  # 16 x 4
 
         # Get hidden states or attentions or both (if they exist)
-        for i in range(len(hidden_states_and_attentions[0])):
-            outputs = outputs + (torch.cat([x[i] for x in hidden_states_and_attentions]), )
+        outputs = (logits, ) + (outputs[2:], )
 
-        return outputs  # scores, (hidden_states), (attentions)
+        return outputs  # logits, (hidden_states), (attentions)
 
     def loss_function(self, logits, labels, num_labels, attention_mask=None, class_weights=None):
-        loss_fct = CrossEntropyLoss(weight=class_weights.to(logits.device))
+        # loss_fct = CrossEntropyLoss(weight=class_weights.to(logits.device))
+        loss_fct = CrossEntropyLoss(weight=None)
+
         # Only keep active parts of the loss
         if attention_mask is not None:
             active_loss = attention_mask.view(-1) == 1
