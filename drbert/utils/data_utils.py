@@ -174,9 +174,16 @@ def wordpiece_tokenize_sents(tokens, tokenizer, labels=None):
 
     # If labels are provided, project them onto bert_tokens
     if labels is not None:
+        bert_labels = []
         # Idea is to take the next item in the iterator if tok_map == 1 else take WORDPIECE
-        bert_labels = [[next(iter(labs)) if i else WORDPIECE for i in tok_map]
-                       for labs, tok_map in zip(labels, orig_tok_mask)]
+        for labs, tok_mask in zip(labels, orig_tok_mask):
+            bert_labels.append([])
+            lab_iter = iter(labs)
+            for i in tok_mask:
+                if i:
+                    bert_labels[-1].append(next(lab_iter))
+                else:
+                    bert_labels[-1].append(WORDPIECE)
 
         outputs = outputs + (bert_labels, )
 
