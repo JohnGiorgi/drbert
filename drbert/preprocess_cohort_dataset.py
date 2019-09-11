@@ -54,7 +54,7 @@ def prepare_cohort_dataset(tokenizer, args):
         sentence_list = [sentence for sentence in list(doc.sents)]
         sentence_list = sentence_list[:MAX_COHORT_NUM_SENTS]  # clip
         token_list = [[str(token) for token in sentence] for sentence in sentence_list]
-        token_list, _, _, _ = wordpiece_tokenize_sents(token_list, tokenizer)
+        token_list = wordpiece_tokenize_sents(token_list, tokenizer)
 
         # no more sentence padding
         # num_extra_sentences = MAX_COHORT_NUM_SENTS - len(token_list)
