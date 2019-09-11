@@ -4,8 +4,7 @@ __pycache__/
 *$py.class
 
 # NeurIPS 2019
-diabetes_data/
-
+data/
 
 # C extensions
 *.so
