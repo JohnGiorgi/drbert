@@ -8,7 +8,7 @@ A BERT-based model for end-to-end neural joint deidentification and cohort build
 
 ### Train the model
 
-```python
+```bash
 python -m drbert.run \
 --dataset_folder ./data \
 --model_name_or_path bert-base-cased \
