@@ -18,7 +18,8 @@ from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm, trange
 
-from .constants import COHORT_DISEASE_LIST, COHORT_LABEL_CONSTANTS, DEID_LABELS
+from .constants import (COHORT_DISEASE_CONSTANTS, COHORT_DISEASE_LIST,
+                        COHORT_LABEL_CONSTANTS, DEID_LABELS, OUTSIDE, PHI)
 from .model import BertForJointDeIDAndCohortID
 from .utils import data_utils, eval_utils
 
@@ -178,24 +179,15 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
                 cohort_batch[1] = cohort_batch[1].squeeze(0)
                 cohort_batch[2] = cohort_batch[2].squeeze(0)
 
-            # Training order of two tasks is chosen at random every batch
-            '''
+            # Training order of two tasks is chosen at random every batch.
+            # Once a dataloader has been exhuasted, it will start returning None.
             batch_pair = [batch for batch in [(deid_batch, 'deid'), (cohort_batch, 'cohort')]
                           if batch[0] is not None]
-
-            batch_pair = [batch_pair[0]]
             random.shuffle(batch_pair)
-            '''
-
-            batch_pair = [(deid_batch, 'deid')]
 
             for batch, task in batch_pair:
-                if batch is None:
-                    break
-
                 batch = tuple(t.to(args.device) for t in batch)
 
-                # TODO (Nick, Gary): Make sure both dataloader return objects in this order
                 inputs = {'input_ids':      batch[0],
                           'attention_mask': batch[1],
                           'labels':         batch[2],
@@ -231,8 +223,7 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
                     if args.local_rank in [-1, 0] and args.logging_steps > 0 and global_step % args.logging_steps == 0:
                         if args.local_rank == -1 and args.evaluate_during_training:  # Only evaluate when single GPU otherwise metrics may not average well
                             deid_results = evaluate(args, model, tokenizer, deid_dataset, task='deid')
-                            # cohort_results = evaluate(args, model, tokenizer, cohort_dataset, task='cohort')
-                            cohort_results = {}
+                            cohort_results = evaluate(args, model, tokenizer, cohort_dataset, task='cohort')
                             ''' TODO
                             for key, value in deid_results.items():
                                 tb_writer.add_scalar('deid_eval_{}'.format(key), value, global_step)
@@ -307,7 +298,6 @@ def evaluate(args, model, tokenizer, dataset, task="deid"):
         eval_dataloader[partition] = \
             DataLoader(dataset[partition], sampler=sampler, batch_size=batch_size)
 
-    # Eval!
     model.eval()
     for partition, dataloader in eval_dataloader.items():
         logger.info(f"***** Running {task} evaluation on {partition} *****")
@@ -331,24 +321,15 @@ def evaluate(args, model, tokenizer, dataset, task="deid"):
                 labels.append(inputs['labels'])
                 predictions.append(logits.argmax(dim=-1))
 
-                if task == 'deid':
-                    orig_tok_mask.append(batch[3])
-
-        labels = torch.cat(labels)
-        predictions = torch.cat(predictions)
-
-        if orig_tok_mask:
-            orig_tok_mask = torch.cat(orig_tok_mask)
-
-        # TODO: result need to be a dictionary of keys (corresponding to some metric) and values
-        # (corresponding to the score for that metric), e.g. {'f1': 0.76}, in order for the rest of
-        # this script to not break
         if task == 'deid':
+            labels = torch.cat(labels)
+            predictions = torch.cat(predictions)
+            orig_tok_mask = torch.cat(orig_tok_mask)
             results = evaluate_deid(args, labels, predictions, orig_tok_mask)
         elif task == 'cohort':
             results = evaluate_cohort(labels, predictions)
 
-        eval_utils.print_evaluation(results)
+        eval_utils.print_evaluation(results, title=partition.title())
 
     return results
 
@@ -376,36 +357,48 @@ def evaluate_deid(args, labels, predictions, orig_tok_mask):
 
     scores = eval_utils.precision_recall_f1_support_sequence_labelling(y_true, y_pred)
 
+    # Add binary F1 scores
+    y_true_binary = [tag if idx_to_tag[tag] == OUTSIDE else f'{tag.split("-")[0]}-{PHI}'
+                     for tag in y_true]
+    y_pred_binary = [tag if idx_to_tag[tag] == OUTSIDE else f'{tag.split("-")[0]}-{PHI}'
+                     for tag in y_true]
+    scores[PHI] = \
+        eval_utils.precision_recall_f1_support_sequence_labelling(y_true_binary, y_pred_binary)[PHI]
+
     return scores
 
 
-def evaluate_cohort(labels, predictions):
+def evaluate_cohort(labels, predictions, average="macro"):
     """Coordinates evaluation for the cohort identification task.
-
     Args:
         labels (list): A list of Tensors containing the gold labels for each example.
         predictions (list): A list of Tensors containing the predicted labels for each example.
-
+        average (flag): Set micro or macro mode of eval
     Returns:
-        dict: A dictionary of scores keyed by the labels in `labels` where each score is a 4-tuple
-            containing precision, recall, f1 and support. Additionally includes the keys
-            'Macro avg' and 'Micro avg' containing the macro and micro averages across scores.
+        scores (dict): A dictionairy of dictionaries of diseases and their scores (precision, recall, F1, support) using sklearn precision_recall_fscore_support
     """
-    assert len(labels) == len(predictions)
+    idx_to_tag = eval_utils.reverse_dict(COHORT_DISEASE_CONSTANTS)
 
-    # P, R, F1, support
-    # disease_dict = {value:[[],[]] for (key,value) in COHORT_DISEASE_CONSTANTS.items()}
-    # score_dict = {key: [] for (key,value) in COHORT_DISEASE_CONSTANTS.items()}
+    disease_dict = {key: [[], []] for key, value in idx_to_tag.items()}
+    scores = {value: [] for key, value in idx_to_tag.items()}
 
-    # for prediction, label in zip(predictions, labels):
-    #     for i in range(len(prediction)):
-    #        disease_dict[i][0].extend(label[i])
-    #        disease_dict[i][1].extend(prediction[i])
+    for pred_list, lab_list in zip(predictions, labels):
+        for i in range(len(pred_list)):
+            label = lab_list[i].item()
+            pred = pred_list[i].item()
 
-    # for disease in disease_dict:
-    #     precision, recall, f1, support = precision_recall_fscore_support(disease[0], disease[1])
+            disease_dict[i][0].append(label)
+            disease_dict[i][1].append(pred)
+    # print(disease_dict)
+    for disease_idx in disease_dict:
+        precision, recall, f1, support = \
+            precision_recall_fscore_support(disease_dict[disease_idx][0],
+                                            disease_dict[disease_idx][1],
+                                            average=average)
 
-    # # return disease_dict
+        scores[idx_to_tag[disease_idx]] = (precision, recall, f1, support)
+
+    return scores
 
 
 def main():
