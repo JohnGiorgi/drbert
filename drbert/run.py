@@ -185,6 +185,8 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
                           if batch[0] is not None]
             random.shuffle(batch_pair)
 
+            # batch_pair = [(deid_batch, 'deid')]
+
             for batch, task in batch_pair:
                 batch = tuple(t.to(args.device) for t in batch)
 
@@ -306,6 +308,12 @@ def evaluate(args, model, tokenizer, dataset, task="deid"):
 
         labels, predictions, orig_tok_mask = [], [], []
         for batch in tqdm(dataloader, desc="Evaluating"):
+            # Dataloader introduces a first dimension of size one
+            if task == 'cohort':
+                batch[0] = batch[0].squeeze(0)
+                batch[1] = batch[1].squeeze(0)
+                batch[2] = batch[2].squeeze(0)
+
             batch = tuple(t.to(args.device) for t in batch)
             with torch.no_grad():
                 inputs = {'input_ids':      batch[0],
@@ -320,6 +328,7 @@ def evaluate(args, model, tokenizer, dataset, task="deid"):
                 # Need to accumulate these for evaluation
                 labels.append(inputs['labels'])
                 predictions.append(logits.argmax(dim=-1))
+                if task == 'deid': orig_tok_mask.append(batch[3])
 
         if task == 'deid':
             labels = torch.cat(labels)
@@ -358,10 +367,9 @@ def evaluate_deid(args, labels, predictions, orig_tok_mask):
     scores = eval_utils.precision_recall_f1_support_sequence_labelling(y_true, y_pred)
 
     # Add binary F1 scores
-    y_true_binary = [tag if idx_to_tag[tag] == OUTSIDE else f'{tag.split("-")[0]}-{PHI}'
-                     for tag in y_true]
-    y_pred_binary = [tag if idx_to_tag[tag] == OUTSIDE else f'{tag.split("-")[0]}-{PHI}'
-                     for tag in y_true]
+    y_true_binary = [tag if tag == OUTSIDE else f'{tag.split("-")[0]}-{PHI}' for tag in y_true]
+    y_pred_binary = [tag if tag == OUTSIDE else f'{tag.split("-")[0]}-{PHI}' for tag in y_pred]
+
     scores[PHI] = \
         eval_utils.precision_recall_f1_support_sequence_labelling(y_true_binary, y_pred_binary)[PHI]
 
@@ -534,8 +542,8 @@ def main():
     # Here, we add any additional configs to the Pytorch Transformers config file. These will be
     # saved to a `output_dir/config.json` file when we call model.save_pretrained(output_dir)
     config.__dict__['num_deid_labels'] = len(DEID_LABELS)
-    config.__dict__['num_cohort_disease'] = len(COHORT_LABEL_CONSTANTS)
-    config.__dict__['num_cohort_classes'] = len(COHORT_DISEASE_LIST)
+    config.__dict__['num_cohort_disease'] = len(COHORT_DISEASE_LIST)
+    config.__dict__['num_cohort_classes'] = len(COHORT_LABEL_CONSTANTS)
     config.__dict__['cohort_ffnn_size'] = 512
     config.__dict__['max_batch_size'] = args.train_batch_size
     config.__dict__['deid_class_weights'] = deid_class_weights

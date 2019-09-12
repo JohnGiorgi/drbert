@@ -17,7 +17,7 @@ class BertForJointDeIDAndCohortID(BertPreTrainedModel):
         self.num_deid_labels = config.num_deid_labels
         self.num_cohort_disease = config.num_cohort_disease  # diabetes, ..., etc.
         self.num_cohort_classes = config.num_cohort_classes  # yes, no, unmentioned, questionable
-        self.num_cohort_labels = self.num_cohort_classes * self.num_cohort_disease
+        self.num_cohort_labels = self.num_cohort_disease * self.num_cohort_classes
         self.max_batch_size = config.max_batch_size
         self.deid_class_weights = torch.as_tensor(config.deid_class_weights)
 
@@ -57,19 +57,21 @@ class BertForJointDeIDAndCohortID(BertPreTrainedModel):
 
         # If labels are provided, compute a loss for ONE task
         if labels is not None:
+            loss_fct_inputs = {'labels': labels}
             if task is None:
                 raise ValueError('If labels is not None, task must be one of "deid", "cohort".')
             if task == 'deid':
                 outputs = self._deid_forward(**inputs)
                 num_labels = (-1, self.num_deid_labels)
+                loss_fct_inputs['attention_mask'] = attention_mask
             elif task == 'cohort':
                 outputs = self._cohort_forward(**inputs)
                 num_labels = (self.num_cohort_disease, self.num_cohort_classes)
-                attention_mask = None
 
-            logits = outputs[0]
-            loss = self.loss_function(logits, labels, num_labels, attention_mask)
-            outputs = (loss, logits) + outputs[2:]
+            loss_fct_inputs.update({'logits': outputs[0], 'num_labels': num_labels})
+            loss = self.loss_function(**loss_fct_inputs)
+
+            outputs = (loss, outputs[0]) + outputs[2:]
         # Otherwise, we are performing inference
         else:
             if task == 'deid':
