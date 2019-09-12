@@ -6,14 +6,14 @@ import torch
 from pytorch_transformers import BertTokenizer
 from tqdm import tqdm
 
-from .constants import (COHORT_DISEASE_CONSTANTS, COHORT_LABEL_CONSTANTS,
-                        MAX_COHORT_NUM_SENTS)
+from .constants import (BERT_MAX_SENT_LEN, COHORT_DISEASE_CONSTANTS,
+                        COHORT_LABEL_CONSTANTS, MAX_COHORT_NUM_SENTS)
 from .preprocess_cohort import read_charts, read_labels
 from .utils.data_utils import (index_pad_mask_bert_tokens,
                                wordpiece_tokenize_sents)
 
 
-def prepare_cohort_dataset(tokenizer, args):
+def prepare_cohort_dataset(args, tokenizer):
     nlp = spacy.load("en_core_sci_md")
     data_path = os.path.join(args.dataset_folder, "cohort")
 
@@ -23,20 +23,19 @@ def prepare_cohort_dataset(tokenizer, args):
     # labels format: test_labels[chart_id][disease_name] = judgement # format
     labels_preprocessed = read_labels(data_path)
 
+    maxlen = args.max_seq_length if args.type == "train" else BERT_MAX_SENT_LEN
+
     if args.type == "train" or args.type == "valid":
         inputs = inputs_preprocessed[0]
         labels = labels_preprocessed[0]
+
     else:
         inputs = inputs_preprocessed[1]
         labels = labels_preprocessed[1]
 
     chart_ids = list(labels.keys())
 
-    # TODO (Gary, Nick): This is different than what was provided to train.py.
-    # TODO (Gary, Nick): This is assigned to but never used.
-    max_sent_len = args.max_seq_len
-
-    split = int(len(chart_ids) * 0.8)
+    split = int(len(chart_ids) * 0.9)
     print(f"total data {len(chart_ids)}")
     if args.type == "train":
         chart_ids = chart_ids[:split]
@@ -51,21 +50,14 @@ def prepare_cohort_dataset(tokenizer, args):
 
         doc = nlp(chart)
 
-        sentence_list = [sentence for sentence in list(doc.sents)]
-        sentence_list = sentence_list[:MAX_COHORT_NUM_SENTS]  # clip
-        token_list = [[str(token) for token in sentence] for sentence in sentence_list]
-        token_list = wordpiece_tokenize_sents(token_list, tokenizer)
+        sentences = list(doc.sents)[:MAX_COHORT_NUM_SENTS]  # clip
+        token_list = [[token.text for token in sentence] for sentence in sentences]
+        bert_tokens = wordpiece_tokenize_sents(token_list, tokenizer)[0]
 
-        # no more sentence padding
-        # num_extra_sentences = MAX_COHORT_NUM_SENTS - len(token_list)
-        # for i in range(num_extra_sentences):
-        #     sentence_padding = [CONSTANTS['PAD']] * max_sent_len
-        #     token_list.append(sentence_padding)
-        # TODO (Gary, Nick): Maxlen is hardcoded. It should be whatever was provided to train.py
-        token_ids, attention_mask, _, indexed_labels = index_pad_mask_bert_tokens(
-            tokens=token_list,
+        indexed_tokens, attention_mask = index_pad_mask_bert_tokens(
+            tokens=bert_tokens,
             tokenizer=tokenizer,
-            maxlen=256,
+            maxlen=maxlen,
             tag_to_idx=COHORT_DISEASE_CONSTANTS
         )
 
@@ -76,12 +68,12 @@ def prepare_cohort_dataset(tokenizer, args):
             labels_array[COHORT_DISEASE_CONSTANTS[disease]] = judgement
 
         chart_data = {
-            "input_ids": token_ids.tolist(),
+            "input_ids": indexed_tokens.tolist(),
             "attn_mask": attention_mask.tolist(),
             "labels": labels_array.tolist()
         }
 
-        filepath = os.path.join(data_path, "preprocessed", args.type) + f"/{chart_id}.json"
+        filepath = os.path.join(data_path, "preprocessed", args.type, f"{chart_id}.json")
         with open(filepath, 'w') as open_file:
             open_file.write(json.dumps(chart_data))
 
@@ -93,11 +85,13 @@ if __name__ == "__main__":
                         help="De-id and co-hort identification data directory")
     parser.add_argument("--type", default='train', type=str,
                         help="train valid test")
-    parser.add_argument("--max_seq_len", default=512, type=int,
-                        help="max seq len")
+    parser.add_argument("--max_seq_length", default=256, type=int,
+                        help=("The maximum total input sequence length after WordPiece"
+                              " tokenization. Sequences longer than this will be truncated, and"
+                              " sequences shorter than this will be padded."))
     args = parser.parse_args()
 
     bert_type = "bert-base-cased"
     tokenizer = BertTokenizer.from_pretrained(bert_type)
 
-    cohort_train_dataset = prepare_cohort_dataset(tokenizer, args)
+    cohort_train_dataset = prepare_cohort_dataset(args, tokenizer)
