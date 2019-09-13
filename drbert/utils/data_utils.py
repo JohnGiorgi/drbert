@@ -94,8 +94,6 @@ def prepare_deid_dataset(args, tokenizer):
     conll_parser = ConllCorpusReader(deid_folder, '.conll', ('words', 'pos'))
     dataset = {'train': None, 'valid': None, 'test': None}
 
-    all_labels = []
-
     partitions = glob(os.path.join(deid_folder, '*.tsv'))
 
     for partition_filepath in partitions:
@@ -118,14 +116,17 @@ def prepare_deid_dataset(args, tokenizer):
             )
 
         # Accumulate all tags in the dataset
-        all_labels.extend(indexed_labels.view(-1).tolist())
+        if partition == 'train':
+            class_weights = compute_class_weight(
+                class_weight='balanced', classes=np.unique(indexed_labels.view(-1).tolist()),
+                y=indexed_labels.view(-1).tolist()
+            )
+            class_weights = class_weights.tolist()
 
         dataset[partition] = \
             TensorDataset(indexed_tokens, attention_mask, indexed_labels, orig_tok_mask)
 
         print(f'Done ({time.time() - start:.2f} seconds).')
-
-    class_weights = compute_class_weight('balanced', np.unique(all_labels), all_labels).tolist()
 
     return dataset, class_weights
 

@@ -98,7 +98,7 @@ if __name__ == "__main__":
                         help="De-id and co-hort identification data directory")
     parser.add_argument("--type", default='train', type=str,
                         help="train valid test")
-    parser.add_argument("--cohort_type", default='textual', choices=['textual', 'intuitive'], 
+    parser.add_argument("--cohort_type", default='textual', choices=['textual', 'intuitive'],
                         type=str, help="what do you think this is")
     parser.add_argument("--max_seq_length", default=60, type=int,
                         help=("The maximum total input sequence length after WordPiece"
@@ -106,7 +106,7 @@ if __name__ == "__main__":
                               " sequences shorter than this will be padded."))
     args = parser.parse_args()
 
-    bert_type = "bert-base-uncased"
-    tokenizer = BertTokenizer.from_pretrained(bert_type, do_lower_case=True)
+    bert_type = "bert-base-cased"
+    tokenizer = BertTokenizer.from_pretrained(bert_type, do_lower_case=False)
 
     cohort_train_dataset = prepare_cohort_dataset(args, tokenizer)

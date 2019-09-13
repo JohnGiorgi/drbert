@@ -115,8 +115,6 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
     # batch_size hardcoded to 1 because these sentences are grouped by document
     cohort_dataloader = DataLoader(cohort_dataset['train'], sampler=cohort_sampler, batch_size=1)
 
-    deid_total = len(deid_dataloader) // args.gradient_accumulation_steps * args.num_train_epochs
-    cohort_total = len(cohort_dataloader) // args.gradient_accumulation_steps * args.num_train_epochs
     t_total = ((len(deid_dataloader) + len(cohort_dataloader)) //
                args.gradient_accumulation_steps * args.num_train_epochs)
 
@@ -169,7 +167,7 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
     for epoch, _ in enumerate(train_iterator):
         epoch_iterator = tqdm(zip_longest(deid_dataloader, cohort_dataloader),
                               unit="batch", desc="Iteration",
-                              total=len(deid_dataloader) + len(cohort_dataloader),
+                              total=max(len(deid_dataloader), len(cohort_dataloader)),
                               disable=args.local_rank not in [-1, 0],
                               dynamic_ncols=True)
         for step, (deid_batch, cohort_batch) in enumerate(epoch_iterator):
@@ -186,8 +184,6 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
             batch_pair = [batch for batch in [(deid_batch, 'deid'), (cohort_batch, 'cohort')]
                           if batch[0] is not None]
             random.shuffle(batch_pair)
-
-            # batch_pair = [(cohort_batch, 'cohort')]
 
             for batch, task in batch_pair:
                 batch = tuple(t.to(args.device) for t in batch)
@@ -244,7 +240,7 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
                                 tb_writer.add_scalar('cohort_eval_{}'.format(key), value, global_step)
                             '''
                         tb_writer.add_scalar('lr', scheduler.get_lr()[0], global_step)
-                        tb_writer.add_scalar('loss', (tr_loss[task] - logging_loss[task])/args.logging_steps, global_step)
+                        tb_writer.add_scalar('loss', (tr_loss[task] - logging_loss[task]) / args.logging_steps, global_step)
                         logging_loss[task] = tr_loss[task]
 
                     # Save model checkpoint
@@ -257,8 +253,8 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
                         torch.save(args, os.path.join(output_dir, 'training_args.bin'))
                         logger.info("Saving model checkpoint to %s", output_dir)
 
-                deid_loss = tr_loss["deid"] / (deid_total * epoch + (step + 1))
-                cohort_loss = tr_loss["cohort"] / (cohort_total * epoch + (step + 1))
+                deid_loss = tr_loss["deid"] / (global_step + 1)
+                cohort_loss = tr_loss["cohort"] / (global_step + 1)
 
                 postfix = {'deid_loss': f'{deid_loss:.6f}',
                            'cohort_loss': f'{cohort_loss:.6f}',
@@ -307,6 +303,9 @@ def evaluate(args, model, tokenizer, dataset, task="deid"):
     batch_size = args.eval_batch_size if task == 'deid' else 1
 
     for partition in dataset:
+        # TODO (John): Tmp, don't waste time eval'ing on train
+        if partition == 'train':
+            continue
         sampler = (SequentialSampler(dataset[partition]) if args.local_rank == -1
                    # Note that DistributedSampler samples randomly
                    else DistributedSampler(dataset[partition]))
@@ -348,11 +347,18 @@ def evaluate(args, model, tokenizer, dataset, task="deid"):
             labels = torch.cat(labels)
             predictions = torch.cat(predictions)
             orig_tok_mask = torch.cat(orig_tok_mask)
+
             evaluation = evaluate_deid(args, labels, predictions, orig_tok_mask)
+            eval_utils.print_evaluation(evaluation, title=partition.title())
         elif task == 'cohort':
             evaluation = evaluate_cohort(labels, predictions)
 
-        eval_utils.print_evaluation(evaluation, title=partition.title())
+            # For cohort, print both macro and micro averages per disease
+            for avg_type in evaluation:
+                eval_utils.print_evaluation(
+                    evaluation=evaluation[avg_type],
+                    title=f'{partition.title()} ({avg_type})')
+
         evaluations[partition] = evaluation
 
         del batch, inputs, outputs
@@ -393,7 +399,7 @@ def evaluate_deid(args, labels, predictions, orig_tok_mask):
     return scores
 
 
-def evaluate_cohort(labels, predictions, average="micro"):
+def evaluate_cohort(labels, predictions):
     """Coordinates evaluation for the cohort identification task.
     Args:
         labels (list): A list of Tensors containing the gold labels for each example.
@@ -405,7 +411,9 @@ def evaluate_cohort(labels, predictions, average="micro"):
     idx_to_tag = eval_utils.reverse_dict(COHORT_DISEASE_CONSTANTS)
 
     disease_dict = {key: [[], []] for key, value in idx_to_tag.items()}
-    scores = {value: [] for key, value in idx_to_tag.items()}
+    scores = {'micro': {value: [] for key, value in idx_to_tag.items()},
+              'macro': {value: [] for key, value in idx_to_tag.items()},
+              }
 
     for pred_list, lab_list in zip(predictions, labels):
         for i in range(len(pred_list)):
@@ -416,23 +424,30 @@ def evaluate_cohort(labels, predictions, average="micro"):
             disease_dict[i][1].append(pred)
 
     for disease_idx in disease_dict:
-        scores[idx_to_tag[disease_idx]] = \
-            precision_recall_fscore_support(disease_dict[disease_idx][0],
-                                            disease_dict[disease_idx][1],
-                                            average=average)
+        scores['micro'][idx_to_tag[disease_idx]] = precision_recall_fscore_support(
+            y_true=disease_dict[disease_idx][0],
+            y_pred=disease_dict[disease_idx][1],
+            average="micro"
+        )
+        scores['macro'][idx_to_tag[disease_idx]] = precision_recall_fscore_support(
+            y_true=disease_dict[disease_idx][0],
+            y_pred=disease_dict[disease_idx][1],
+            average="macro"
+        )
 
-    # Get a arithmetic mean over all diseases and add it to the table
-    avg_precision, average_recall, average_f1 = 0, 0, 0
-    for disease, score in scores.items():
-        avg_precision += score[0]
-        average_recall += score[1]
-        average_f1 += score[2]
+    # Get an arithmetic mean over all diseases and add it to the table
+    for avg_type, disease_scores in scores.items():
+        avg_precision, average_recall, average_f1 = 0, 0, 0
+        for score in disease_scores.values():
+            avg_precision += score[0]
+            average_recall += score[1]
+            average_f1 += score[2]
 
-    avg_precision /= len(scores)
-    average_recall /= len(scores)
-    average_f1 /= len(scores)
+        avg_precision /= len(disease_scores)
+        average_recall /= len(disease_scores)
+        average_f1 /= len(disease_scores)
 
-    scores['Avg'] = (avg_precision, average_recall, average_f1, None)
+        scores[avg_type]['Avg'] = (avg_precision, average_recall, average_f1, None)
 
     return scores
 
@@ -563,7 +578,8 @@ def main():
         args.config_name if args.config_name else args.model_name_or_path
     )
     tokenizer = AutoTokenizer.from_pretrained(
-        args.tokenizer_name if args.tokenizer_name else args.model_name_or_path
+        args.tokenizer_name if args.tokenizer_name else args.model_name_or_path,
+        do_lower_case=args.do_lower_case
     )
 
     # Process the data

@@ -20,6 +20,7 @@ class BertForJointDeIDAndCohortID(BertPreTrainedModel):
         self.num_cohort_labels = self.num_cohort_disease * self.num_cohort_classes
         self.max_batch_size = config.max_batch_size
         self.deid_class_weights = torch.as_tensor(config.deid_class_weights)
+        self.cohort_class_weights = torch.as_tensor([0.0029, 0.7232, 0.2664, 0.0075])
 
         # Core BERT model
         self.bert = BertModel(config)
@@ -63,10 +64,16 @@ class BertForJointDeIDAndCohortID(BertPreTrainedModel):
             if task == 'deid':
                 outputs = self._deid_forward(**inputs)
                 num_labels = (-1, self.num_deid_labels)
-                loss_fct_inputs['attention_mask'] = attention_mask
+                loss_fct_inputs.update({
+                    'attention_mask': attention_mask,
+                    # 'class_weights': self.deid_class_weights
+                })
             elif task == 'cohort':
                 outputs = self._cohort_forward(**inputs)
                 num_labels = (self.num_cohort_disease, self.num_cohort_classes)
+                loss_fct_inputs.update({
+                    'class_weights': self.cohort_class_weights
+                })
 
             loss_fct_inputs.update({'logits': outputs[0], 'num_labels': num_labels})
             loss = self.loss_function(**loss_fct_inputs)
@@ -119,8 +126,10 @@ class BertForJointDeIDAndCohortID(BertPreTrainedModel):
         return outputs  # logits, (hidden_states), (attentions)
 
     def loss_function(self, logits, labels, num_labels, attention_mask=None, class_weights=None):
-        # loss_fct = CrossEntropyLoss(weight=class_weights.to(logits.device))
-        loss_fct = CrossEntropyLoss(weight=None)
+        if class_weights is not None:
+            class_weights = class_weights.to(logits.device)
+
+        loss_fct = CrossEntropyLoss(weight=class_weights)
 
         # Only keep active parts of the loss
         if attention_mask is not None:
