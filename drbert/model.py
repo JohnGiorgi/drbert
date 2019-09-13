@@ -107,8 +107,7 @@ class BertForJointDeIDAndCohortID(BertPreTrainedModel):
         cls_output = outputs[1]
 
         # Pool outputs
-        # TODO (Gary, John): What's better empirically, sum or mean?
-        cls_output = torch.mean(cls_output, dim=0, keepdim=True)
+        cls_output = torch.sum(cls_output, dim=0)
         cls_output = self.dropout(cls_output)
 
         logits = self.cohort_classifier(cls_output)

@@ -19,7 +19,9 @@ from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm, trange
 
 from .constants import (COHORT_DISEASE_CONSTANTS, COHORT_DISEASE_LIST,
-                        COHORT_LABEL_CONSTANTS, DEID_LABELS, OUTSIDE, PHI)
+                        COHORT_INTUITIVE_LABEL_CONSTANTS,
+                        COHORT_TEXTUAL_LABEL_CONSTANTS, DEID_LABELS, OUTSIDE,
+                        PHI)
 from .model import BertForJointDeIDAndCohortID
 from .utils import data_utils, eval_utils
 
@@ -167,7 +169,7 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
     for epoch, _ in enumerate(train_iterator):
         epoch_iterator = tqdm(zip_longest(deid_dataloader, cohort_dataloader),
                               unit="batch", desc="Iteration",
-                              total=t_total // args.num_train_epochs,
+                              total=len(deid_dataloader) + len(cohort_dataloader),
                               disable=args.local_rank not in [-1, 0],
                               dynamic_ncols=True)
         for step, (deid_batch, cohort_batch) in enumerate(epoch_iterator):
@@ -185,7 +187,7 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
                           if batch[0] is not None]
             random.shuffle(batch_pair)
 
-            # batch_pair = [(deid_batch, 'deid')]
+            # batch_pair = [(cohort_batch, 'cohort')]
 
             for batch, task in batch_pair:
                 batch = tuple(t.to(args.device) for t in batch)
@@ -223,9 +225,18 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
 
                     # Log metrics
                     if args.local_rank in [-1, 0] and args.logging_steps > 0 and global_step % args.logging_steps == 0:
-                        if args.local_rank == -1 and args.evaluate_during_training:  # Only evaluate when single GPU otherwise metrics may not average well
-                            deid_results = evaluate(args, model, tokenizer, deid_dataset, task='deid')
-                            cohort_results = evaluate(args, model, tokenizer, cohort_dataset, task='cohort')
+                        # Only evaluate when single GPU otherwise metrics may not average well
+                        if args.local_rank == -1 and args.evaluate_during_training:
+                            deid_results = \
+                                evaluate(args, model, tokenizer, deid_dataset, task='deid')
+                            cohort_results = \
+                                evaluate(args, model, tokenizer, cohort_dataset, task='cohort')
+
+                            results = {'deid': deid_results, 'cohort': cohort_results}
+
+                            # TODO (John): This is a temp hack
+                            eval_utils.save_eval_to_disk(args, global_step, **results)
+
                             ''' TODO
                             for key, value in deid_results.items():
                                 tb_writer.add_scalar('deid_eval_{}'.format(key), value, global_step)
@@ -254,6 +265,8 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
                            'total_loss': f'{(deid_loss + cohort_loss):.6f}'
                            }
                 epoch_iterator.set_postfix(postfix)
+
+                del batch, inputs, outputs
 
             if args.max_steps > 0 and global_step > args.max_steps:
                 epoch_iterator.close()
@@ -300,6 +313,7 @@ def evaluate(args, model, tokenizer, dataset, task="deid"):
         eval_dataloader[partition] = \
             DataLoader(dataset[partition], sampler=sampler, batch_size=batch_size)
 
+    evaluations = {}
     model.eval()
     for partition, dataloader in eval_dataloader.items():
         logger.info(f"***** Running {task} evaluation on {partition} *****")
@@ -334,13 +348,16 @@ def evaluate(args, model, tokenizer, dataset, task="deid"):
             labels = torch.cat(labels)
             predictions = torch.cat(predictions)
             orig_tok_mask = torch.cat(orig_tok_mask)
-            results = evaluate_deid(args, labels, predictions, orig_tok_mask)
+            evaluation = evaluate_deid(args, labels, predictions, orig_tok_mask)
         elif task == 'cohort':
-            results = evaluate_cohort(labels, predictions)
+            evaluation = evaluate_cohort(labels, predictions)
 
-        eval_utils.print_evaluation(results, title=partition.title())
+        eval_utils.print_evaluation(evaluation, title=partition.title())
+        evaluations[partition] = evaluation
 
-    return results
+        del batch, inputs, outputs
+
+    return evaluations
 
 
 def evaluate_deid(args, labels, predictions, orig_tok_mask):
@@ -376,7 +393,7 @@ def evaluate_deid(args, labels, predictions, orig_tok_mask):
     return scores
 
 
-def evaluate_cohort(labels, predictions, average="macro"):
+def evaluate_cohort(labels, predictions, average="micro"):
     """Coordinates evaluation for the cohort identification task.
     Args:
         labels (list): A list of Tensors containing the gold labels for each example.
@@ -397,14 +414,25 @@ def evaluate_cohort(labels, predictions, average="macro"):
 
             disease_dict[i][0].append(label)
             disease_dict[i][1].append(pred)
-    # print(disease_dict)
+
     for disease_idx in disease_dict:
-        precision, recall, f1, support = \
+        scores[idx_to_tag[disease_idx]] = \
             precision_recall_fscore_support(disease_dict[disease_idx][0],
                                             disease_dict[disease_idx][1],
                                             average=average)
 
-        scores[idx_to_tag[disease_idx]] = (precision, recall, f1, support)
+    # Get a arithmetic mean over all diseases and add it to the table
+    avg_precision, average_recall, average_f1 = 0, 0, 0
+    for disease, score in scores.items():
+        avg_precision += score[0]
+        average_recall += score[1]
+        average_f1 += score[2]
+
+    avg_precision /= len(scores)
+    average_recall /= len(scores)
+    average_f1 /= len(scores)
+
+    scores['Avg'] = (avg_precision, average_recall, average_f1, None)
 
     return scores
 
@@ -413,6 +441,9 @@ def main():
     parser = argparse.ArgumentParser()
 
     # Required parameters
+    # TODO (John): If "technical debt" had a dictionary entry they would show this as example
+    parser.add_argument("--cohort_type", default='textual', choices=['textual', 'intuitive'], type=str, help="what do you think this is")
+
     parser.add_argument("--dataset_folder", default=None, type=str, required=True,
                         help="De-id and co-hort identification data directory.")
     parser.add_argument("--model_name_or_path", default=None, type=str, required=True,
@@ -543,7 +574,11 @@ def main():
     # saved to a `output_dir/config.json` file when we call model.save_pretrained(output_dir)
     config.__dict__['num_deid_labels'] = len(DEID_LABELS)
     config.__dict__['num_cohort_disease'] = len(COHORT_DISEASE_LIST)
-    config.__dict__['num_cohort_classes'] = len(COHORT_LABEL_CONSTANTS)
+    # Num of labels is dependent on whether we are running the textual or intuitive analysis
+    if args.cohort_type:
+        config.__dict__['num_cohort_classes'] = len(COHORT_TEXTUAL_LABEL_CONSTANTS)
+    else:
+        config.__dict__['num_cohort_classes'] = len(COHORT_INTUITIVE_LABEL_CONSTANTS)
     config.__dict__['cohort_ffnn_size'] = 512
     config.__dict__['max_batch_size'] = args.train_batch_size
     config.__dict__['deid_class_weights'] = deid_class_weights

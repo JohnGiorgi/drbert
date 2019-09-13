@@ -1,3 +1,5 @@
+import json
+import os
 from statistics import mean
 
 from prettytable import PrettyTable
@@ -115,3 +117,14 @@ def print_evaluation(evaluation, title=None):
     print(table)
 
     return table
+
+
+def save_eval_to_disk(args, step, **kwargs):
+    evaluation = {'train': {}, 'valid': {}, 'test': {}}
+    for partition in evaluation:
+        for task, results in kwargs.items():
+            if partition in results:
+                evaluation[partition][task] = results[partition]
+
+    with open(os.path.join(args.output_dir, f'evaluation_{step}.json'), 'w') as f:
+        json.dump(evaluation, f, indent=2)
