@@ -1,14 +1,12 @@
 import torch
 from torch import nn
 
-from ..modules.sequence_labelling_head import SequenceLabellingHead
-
 
 class TestSequenceLabellingHead(object):
     """Collects all unit tests for `drbert.modules.SequenceLabellingHead`.
     """
     def test_attributes_after_initialization(self, sequence_labelling_head):
-        batch_size, in_features, out_features, head = sequence_labelling_head
+        _, in_features, out_features, head = sequence_labelling_head
 
         assert head.in_features == in_features
         assert head.out_features == out_features

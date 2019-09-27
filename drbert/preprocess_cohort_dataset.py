@@ -6,7 +6,7 @@ import torch
 from pytorch_transformers import BertTokenizer
 from tqdm import tqdm
 
-from .constants import (BERT_MAX_SENT_LEN, COHORT_DISEASE_CONSTANTS,
+from .constants import (COHORT_DISEASE_CONSTANTS,
                         COHORT_INTUITIVE_LABEL_CONSTANTS,
                         COHORT_TEXTUAL_LABEL_CONSTANTS, MAX_COHORT_NUM_SENTS)
 from .preprocess_cohort import (read_charts_intuitive, read_charts_textual,

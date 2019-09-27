@@ -46,7 +46,7 @@ python -m drbert.run --help
 
 If within the top-level of your cloned copy of the repository, call
 
-```
+```bash
 pytest
 ```
 

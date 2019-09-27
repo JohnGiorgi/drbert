@@ -60,7 +60,7 @@ def read_labels_textual(data_path="data/cohort"):
         for disease_label in disease_label_list:
             disease_name = disease_label['@name']
             disease_docs = disease_label['doc']
-            if type(disease_docs) == list:
+            if isinstance(disease_docs, list):
                 for doc in disease_docs:
                     chart_id = doc['@id']
                     chart_label = doc['@judgment']

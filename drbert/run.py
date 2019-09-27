@@ -164,7 +164,7 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
 
     set_seed(args)  # Added here for reproductibility (even between python 2 and 3)
 
-    for epoch, _ in enumerate(train_iterator):
+    for _, _ in enumerate(train_iterator):
         epoch_iterator = tqdm(zip_longest(deid_dataloader, cohort_dataloader),
                               unit="batch", desc="Iteration",
                               total=max(len(deid_dataloader), len(cohort_dataloader)),
@@ -416,7 +416,7 @@ def evaluate_cohort(labels, predictions):
               }
 
     for pred_list, lab_list in zip(predictions, labels):
-        for i in range(len(pred_list)):
+        for i, _ in enumerate(pred_list):
             label = lab_list[i].item()
             pred = pred_list[i].item()
 
