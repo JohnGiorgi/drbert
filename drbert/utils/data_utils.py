@@ -1,16 +1,19 @@
 import json
 import os
 import threading
+import time
+from glob import glob
 from multiprocessing import Pool
 
+import numpy as np
 import torch
 from keras_preprocessing.sequence import pad_sequences
 from nltk.corpus.reader.conll import ConllCorpusReader
-from pytorch_transformers import BertTokenizer
-from torch.utils.data import DataLoader, RandomSampler, TensorDataset
+from sklearn.utils.class_weight import compute_class_weight
+from torch.utils.data import TensorDataset
 
-from constants import (BERT_MAX_SENT_LEN, CLS, DEID_LABELS, PAD, SEP,
-                       TOK_MAP_PAD, WORDPIECE)
+from ..constants import (BERT_MAX_SENT_LEN, CLS, DEID_LABELS, PAD, SEP,
+                         WORDPIECE)
 
 
 class CohortDataset(torch.utils.data.Dataset):
@@ -58,9 +61,9 @@ class CohortDataset(torch.utils.data.Dataset):
 
 
 def prepare_cohort_dataset(args, tokenizer):
-    train_data_path = os.path.join(args.dataset_folder, "diabetes_data", "preprocessed", "train")
-    valid_data_path = os.path.join(args.dataset_folder, "diabetes_data", "preprocessed", "valid")
-    test_data_path = os.path.join(args.dataset_folder, "diabetes_data", "preprocessed", "test")
+    train_data_path = os.path.join(args.dataset_folder, "cohort", "preprocessed", "train")
+    valid_data_path = os.path.join(args.dataset_folder, "cohort", "preprocessed", "valid")
+    test_data_path = os.path.join(args.dataset_folder, "cohort", "preprocessed", "test")
 
     train_cohort_dataset = CohortDataset(train_data_path)
     valid_cohort_dataset = CohortDataset(valid_data_path)
@@ -76,31 +79,56 @@ def prepare_cohort_dataset(args, tokenizer):
 
 
 def prepare_deid_dataset(args, tokenizer):
-    conll_parser = ConllCorpusReader(args.dataset_folder, '.conll', ('words', 'pos'))
+    """Prepares the DeID tasks data for training / evaluation.
 
-    type_list = ["train", "valid", "test"]
-    all_dataset = dict.fromkeys(type_list)
+    Args:
+        args (ArgumentParser): ArgumentParser object containing arguments parsed from the command
+            line.
+        tokenizer (BertTokenizer): An object with methods for tokenizing text for input to BERT.
 
-    for data_type in type_list:
-        data_file = os.path.join("deid_data", data_type + ".tsv")
-        sents = list(conll_parser.sents(data_file))
-        tagged_sents = list(conll_parser.tagged_sents(data_file))
+    Returns:
+        dict: A dictionary containing the preprocessed data for each partition 'train', 'valid' and
+            'test'.
+    """
+    deid_folder = os.path.join(args.dataset_folder, 'deid')
+    conll_parser = ConllCorpusReader(deid_folder, '.conll', ('words', 'pos'))
+    dataset = {'train': None, 'valid': None, 'test': None}
 
-        maxlen = args.max_seq_length if data_type == "train" else BERT_MAX_SENT_LEN
+    partitions = glob(os.path.join(deid_folder, '*.tsv'))
 
-        bert_tokens, orig_to_tok_map, bert_labels = \
-            wordpiece_tokenize_sents(sents, tokenizer, tagged_sents)
+    for partition_filepath in partitions:
+        start = time.time()
+        partition_filename = os.path.basename(partition_filepath)
+        partition = os.path.splitext(partition_filename)[0]
+        print(f"Processing DeID data partition: '{partition}'...", end=' ', flush=True)
 
-        indexed_tokens, attention_mask, orig_to_tok_map, indexed_labels = \
+        tokens = list(conll_parser.sents(partition_filename))
+        tags = [[t[-1] for t in s] for s in list(conll_parser.tagged_sents(partition_filename))]
+
+        maxlen = args.max_seq_length if partition == "train" else BERT_MAX_SENT_LEN
+
+        bert_tokens, orig_tok_mask, bert_labels = wordpiece_tokenize_sents(tokens, tokenizer, tags)
+
+        indexed_tokens, attention_mask, orig_tok_mask, indexed_labels = \
             index_pad_mask_bert_tokens(
                 bert_tokens, tokenizer, maxlen=maxlen, labels=bert_labels,
-                orig_to_tok_map=orig_to_tok_map, tag_to_idx=DEID_LABELS
+                orig_tok_mask=orig_tok_mask, tag_to_idx=DEID_LABELS
             )
 
-        all_dataset[data_type] = \
-            TensorDataset(indexed_tokens, attention_mask, indexed_labels, orig_to_tok_map)
+        # Accumulate all tags in the dataset
+        if partition == 'train':
+            class_weights = compute_class_weight(
+                class_weight='balanced', classes=np.unique(indexed_labels.view(-1).tolist()),
+                y=indexed_labels.view(-1).tolist()
+            )
+            class_weights = class_weights.tolist()
 
-    return all_dataset
+        dataset[partition] = \
+            TensorDataset(indexed_tokens, attention_mask, indexed_labels, orig_tok_mask)
+
+        print(f'Done ({time.time() - start:.2f} seconds).')
+
+    return dataset, class_weights
 
 
 def wordpiece_tokenize_sents(tokens, tokenizer, labels=None):
@@ -120,46 +148,54 @@ def wordpiece_tokenize_sents(tokens, tokenizer, labels=None):
 
     Returns:
         If `labels` is not `None`:
-            A tuple of `bert_tokens`, `orig_to_tok_map`, `bert_labels`, representing tokens and
+            A tuple of `bert_tokens`, `orig_tok_mask`, `bert_labels`, representing tokens and
             labels that can be used to train a BERT model and a deterministc mapping of the elements
             in `bert_tokens` to `tokens`.
         If `labels` is `None`:
-            A tuple of `bert_tokens`, and `orig_to_tok_map`, representing tokens that can be used to
+            A tuple of `bert_tokens`, and `orig_tok_mask`, representing tokens that can be used to
             train a BERT model and a deterministc mapping of `bert_tokens` to `sents`.
 
     References:
      - https://github.com/google-research/bert#tokenization
     """
     bert_tokens = []
-    orig_to_tok_map = []
+    orig_tok_mask = []
 
     for sent in tokens:
         bert_tokens.append([CLS])
-        orig_to_tok_map.append([])
+        orig_tok_mask.append([0])
         for orig_token in sent:
-            orig_to_tok_map[-1].append(len(bert_tokens[-1]))
-            bert_tokens[-1].extend(tokenizer.wordpiece_tokenizer.tokenize(orig_token))
+            wordpiece_tokens = tokenizer.wordpiece_tokenizer.tokenize(orig_token)
+            bert_tokens[-1].extend(wordpiece_tokens)
+            orig_tok_mask[-1].extend([1] + [0] * (len(wordpiece_tokens) - 1))
         bert_tokens[-1].append(SEP)
+        orig_tok_mask[-1].append(0)
+
+        outputs = (bert_tokens, orig_tok_mask)
 
     # If labels are provided, project them onto bert_tokens
     if labels is not None:
         bert_labels = []
-        for bert_toks, labs, tok_map in zip(bert_tokens, labels, orig_to_tok_map):
-            labs_iter = iter(labs)
+        # Idea is to take the next item in the iterator if tok_map == 1 else take WORDPIECE
+        for labs, tok_mask in zip(labels, orig_tok_mask):
             bert_labels.append([])
-            for i, _ in enumerate(bert_toks):
-                bert_labels[-1].extend([WORDPIECE if i not in tok_map else next(labs_iter)[1]])
+            lab_iter = iter(labs)
+            for i in tok_mask:
+                if i:
+                    bert_labels[-1].append(next(lab_iter))
+                else:
+                    bert_labels[-1].append(WORDPIECE)
 
-        return bert_tokens, orig_to_tok_map, bert_labels
+        outputs = outputs + (bert_labels, )
 
-    return bert_tokens, orig_to_tok_map
+    return outputs  # bert_tokens, orig_tok_mask, (bert_labels)
 
 
 def index_pad_mask_bert_tokens(tokens,
                                tokenizer,
                                maxlen=512,
                                labels=None,
-                               orig_to_tok_map=None,
+                               orig_tok_mask=None,
                                tag_to_idx=None):
     """Convert `tokens` to indices, pads them, and generates the corresponding attention masks.
 
@@ -169,7 +205,7 @@ def index_pad_mask_bert_tokens(tokens,
         maxlen (int): The maximum length of a sentence. Any sentence longer than this length
             with be truncated, any sentence shorter than this length will be right-padded.
         labels (list): A list of lists containing token-level labels for a collection of sentences.
-        orig_to_tok_map (list). A list of list mapping token indices of pre-bert-tokenized text to
+        orig_tok_mask (list). A list of list mapping token indices of pre-bert-tokenized text to
             token indices in post-bert-tokenized text.
         tag_to_idx (dictionary): A dictionary mapping token-level tags/labels to unique integers.
 
@@ -201,18 +237,19 @@ def index_pad_mask_bert_tokens(tokens,
         torch.ones_like(indexed_tokens)
     )
 
-    if orig_to_tok_map:
-        orig_to_tok_map = pad_sequences(
-            sequences=orig_to_tok_map,
+    outputs = (indexed_tokens, attention_mask)
+
+    if orig_tok_mask:
+        orig_tok_mask = pad_sequences(
+            sequences=orig_tok_mask,
             maxlen=maxlen,
-            dtype='long',
+            dtype='bool',
             padding='post',
             truncating='post',
-            value=TOK_MAP_PAD
+            value=tokenizer.convert_tokens_to_ids(PAD)
         )
-        orig_to_tok_map = torch.as_tensor(orig_to_tok_map)
-        # The map cant contain an index outside the maximum sequence length
-        orig_to_tok_map[orig_to_tok_map > maxlen] = TOK_MAP_PAD
+        orig_tok_mask = torch.as_tensor(orig_tok_mask)
+        outputs = outputs + (orig_tok_mask, )
 
     indexed_labels = None
     if labels:
@@ -225,41 +262,6 @@ def index_pad_mask_bert_tokens(tokens,
             value=tokenizer.convert_tokens_to_ids(PAD)
         )
         indexed_labels = torch.as_tensor(indexed_labels)
+        outputs = outputs + (indexed_labels, )
 
-    return indexed_tokens, attention_mask, orig_to_tok_map, indexed_labels
-
-
-if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset_folder", default=None, type=str, required=True,
-                        help="De-id and co-hort identification data directory")
-    parser.add_argument("--train_batch_size", default=16, type=int,
-                        help="train batch size")
-    args = parser.parse_args()
-
-    bert_type = "bert-base-cased"
-    tokenizer = BertTokenizer.from_pretrained(bert_type)
-
-    deid_dataset = prepare_deid_dataset(tokenizer, args)
-    deid_train_dataset = deid_dataset['train']
-    train_deid_sampler = RandomSampler(deid_train_dataset)
-    train_deid_dataloader = DataLoader(deid_train_dataset, sampler=train_deid_sampler, batch_size=args.train_batch_size)
-    for step, (indexed_tokens, attention_mask, indexed_labels, orig_to_tok_map) in enumerate(train_deid_dataloader):
-        print(f"step: {step}")
-        print(f"indexed_tokens: {indexed_tokens}")
-        print(f"attention_mask: {attention_mask}")
-        print(f"indexed_labels: {indexed_labels}")
-        print(f"orig_to_tok_map: {orig_to_tok_map}")
-        break
-
-    cohort_train_datasets = prepare_cohort_dataset(tokenizer, args)
-    train_datasets = cohort_train_datasets['train']
-    train_cohort_sampler = RandomSampler(train_datasets)
-    train_cohort_dataloader = DataLoader(train_datasets, sampler=train_cohort_sampler, batch_size=1)
-    for i, (input_ids, attn_mask, labels) in enumerate(train_cohort_dataloader):
-        print(i)
-        print(input_ids)
-        print(attn_mask)
-        print(labels)
-        quit()
+    return outputs  # indexed_tokens, attention_mask, (orig_tok_mask), (indexed_labels)

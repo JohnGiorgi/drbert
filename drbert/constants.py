@@ -3,8 +3,8 @@ SEP = '[SEP]'
 CLS = '[CLS]'
 UNK = '[UNK]'
 PAD = '[PAD]'
-TOK_MAP_PAD = -100
 WORDPIECE = 'X'
+PHI = 'PHI'
 BERT_MAX_SENT_LEN = 512
 
 DEID_TYPES = [
@@ -187,11 +187,17 @@ DEID_LABELS = {
     WORDPIECE: 86
 }
 
-COHORT_LABEL_CONSTANTS = {
+COHORT_TEXTUAL_LABEL_CONSTANTS = {
     'U': 0,
     'Q': 1,
     'N': 2,
-    'Y': 3,
+    'Y': 3
+}
+
+COHORT_INTUITIVE_LABEL_CONSTANTS = {
+    'Q': 0,
+    'N': 1,
+    'Y': 2
 }
 
 COHORT_DISEASE_LIST = [
@@ -232,4 +238,4 @@ COHORT_DISEASE_CONSTANTS = {
     'Gout': 15
 }
 
-MAX_COHORT_NUM_SENTS = 256  # number of sentences in chart
+MAX_COHORT_NUM_SENTS = 150  # number of sentences in chart

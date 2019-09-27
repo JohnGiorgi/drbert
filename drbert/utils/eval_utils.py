@@ -1,10 +1,13 @@
+import json
+import os
 from statistics import mean
 
 from prettytable import PrettyTable
 
-from constants import OUTSIDE
 from seqeval.metrics import f1_score, precision_score, recall_score
 from seqeval.metrics.sequence_labeling import get_entities
+
+from ..constants import OUTSIDE
 
 
 def reverse_dict(mapping):
@@ -65,9 +68,8 @@ def precision_recall_f1_support_sequence_labelling(y_true, y_pred):
 
 
 def classification_accuracy(y_true, y_pred):
-    assert len(y_true) == len(y_pred)
     num_correct = 0
-    for i in range(len(y_true)):
+    for i, _ in enumerate(y_true):
         if y_true[i] == y_pred[i]:
             num_correct += 1
     return num_correct / len(y_true)
@@ -75,10 +77,12 @@ def classification_accuracy(y_true, y_pred):
 
 def print_evaluation(evaluation, title=None):
     """Prints an ASCII table of evaluation scores.
+
     Args:
         evaluation: A dictionary of label, score pairs where label is a class tag and
             scores is a 4-tuple containing precision, recall, f1 and support.
         title (str): Optional, the title of the table.
+
     Preconditions:
         Assumes the values of `evaluation` are 4-tuples, where the first three items are
         float representaions of a percentage and the last item is an count integer.
@@ -112,3 +116,14 @@ def print_evaluation(evaluation, title=None):
     print(table)
 
     return table
+
+
+def save_eval_to_disk(args, step, **kwargs):
+    evaluation = {'train': {}, 'valid': {}, 'test': {}}
+    for partition in evaluation:
+        for task, results in kwargs.items():
+            if partition in results:
+                evaluation[partition][task] = results[partition]
+
+    with open(os.path.join(args.output_dir, f'evaluation_{step}.json'), 'w') as f:
+        json.dump(evaluation, f, indent=2)
