@@ -1,0 +1,22 @@
+language: python
+
+os: linux
+
+env: TOXENV=py
+
+matrix:
+  include:
+    - env: TOXENV=manifest
+    - env: TOXENV=pyroma
+
+python:
+  - "3.5"
+  - "3.6"
+  - "3.7"
+  - "3.7-dev"
+  - "3.8-dev"
+  - "nightly"
+
+install: pip install tox
+
+script: tox
