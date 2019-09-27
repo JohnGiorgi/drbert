@@ -380,8 +380,8 @@ def evaluate_deid(args, labels, predictions, orig_tok_mask):
     """
     idx_to_tag = eval_utils.reverse_dict(DEID_LABELS)
 
-    y_true = torch.masked_select(labels, orig_tok_mask.bool())
-    y_pred = torch.masked_select(predictions, orig_tok_mask.bool())
+    y_true = torch.masked_select(labels, orig_tok_mask)
+    y_pred = torch.masked_select(predictions, orig_tok_mask)
 
     # Map predictions to tags
     y_true = [idx_to_tag[idx.item()] for idx in y_true]

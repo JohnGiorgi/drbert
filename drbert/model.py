@@ -5,6 +5,7 @@ import torch.nn as nn
 from pytorch_transformers import BertModel
 from pytorch_transformers.modeling_bert import BertPreTrainedModel
 from torch.nn import CrossEntropyLoss
+from .modules.sequence_labelling_head import SequenceLabellingHead
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +30,7 @@ class BertForJointDeIDAndCohortID(BertPreTrainedModel):
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
         # DeID head
-        self.deid_classifier = nn.Linear(config.hidden_size, self.num_deid_labels)
+        self.deid_classifier = SequenceLabellingHead(config.hidden_size, config.num_deid_labels)
 
         # Cohort head
         self.cohort_classifier = nn.Sequential(
