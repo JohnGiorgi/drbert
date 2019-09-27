@@ -18,7 +18,7 @@ bert_labels = [
     [WORDPIECE, "O", "O", "B-PER", "I-PER", "O", WORDPIECE]
 ]
 
-orig_tok_mask = [[1, 2, 4, 6], [1, 2, 3, 4, 5]]
+orig_tok_mask = [[0, 1, 1, 0, 1, 0, 1, 0], [0, 1, 1, 1, 1, 1, 0]]
 
 tag_to_idx = {
     PAD: 0,
@@ -62,14 +62,17 @@ class TestBertUtils(object):
         """Asserts that `data_utils.index_pad_mask_bert_tokens()` returns the expected values for a
         simple input when input argument `labels` is None.
         """
-        actual_indexed_tokens, actual_orig_tok_mask, actual_attention_mask = \
+        actual_indexed_tokens, actual_attention_mask, actual_orig_tok_mask = \
             data_utils.index_pad_mask_bert_tokens(bert_tokens,
                                                   orig_tok_mask=orig_tok_mask,
                                                   tokenizer=bert_tokenizer)
 
         expected_orig_tok_mask = torch.as_tensor(
-            [tm + [0] * (BERT_MAX_SENT_LEN - len(tm)) for tm in orig_tok_mask]
+            [tm + [0] * (BERT_MAX_SENT_LEN - len(tm)) for tm in orig_tok_mask],
+            dtype=torch.bool
         )
+
+        print(actual_orig_tok_mask, expected_orig_tok_mask)
 
         # Just check for shape, as token indicies will depend on specific BERT model used
         assert actual_indexed_tokens.shape == (2, BERT_MAX_SENT_LEN)
@@ -80,7 +83,7 @@ class TestBertUtils(object):
         """Asserts that `data_utils.index_pad_mask_bert_tokens()` returns the expected values for a
         simple input when input argument `labels` is not None.
         """
-        (actual_indexed_tokens, actual_orig_tok_mask, actual_attention_mask,
+        (actual_indexed_tokens, actual_attention_mask, actual_orig_tok_mask,
          actual_indexed_labels) = \
             data_utils.index_pad_mask_bert_tokens(tokens=bert_tokens,
                                                   orig_tok_mask=orig_tok_mask,
@@ -89,7 +92,8 @@ class TestBertUtils(object):
                                                   tag_to_idx=tag_to_idx)
 
         expected_orig_tok_mask = torch.as_tensor(
-            [tm + [tag_to_idx[PAD]] * (BERT_MAX_SENT_LEN - len(tm)) for tm in orig_tok_mask]
+            [tm + [tag_to_idx[PAD]] * (BERT_MAX_SENT_LEN - len(tm)) for tm in orig_tok_mask],
+            dtype=torch.bool
         )
         expected_indexed_labels = torch.tensor(
             [[tag_to_idx[lab] for lab in sent] + [0] * (BERT_MAX_SENT_LEN - len(sent))
