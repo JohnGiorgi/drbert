@@ -4,9 +4,17 @@
 
 A BERT-based model for end-to-end neural joint deidentification and cohort building from medical notes.
 
+## Installation
+
+```bash
+git clone https://github.com/JohnGiorgi/drbert.git
+cd drbert
+pip install -r requirements.txt
+```
+
 ## Usage
 
-### Train the model
+### Training
 
 ```bash
 python -m drbert.run \
@@ -27,3 +35,19 @@ python -m drbert.run \
 --overwrite_output_dir \
 --fp16
 ```
+
+### Help
+
+```bash
+python -m drbert.run --help
+```
+
+## Testing
+
+If within the top-level of your cloned copy of the repository, call
+
+```
+pytest
+```
+
+Note you will need to `pip install pytest` if not already installed.
