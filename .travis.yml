@@ -1,10 +1,6 @@
 language: python
 os: linux
 
-python:
-  - '3.6'
-  - '3.7'
-
 # CODACY_PROJECT_TOKEN, required for pushing code coverage to Codacy.
 global:
   - secure: hIquJWIC9pgChbG85b7dMjtp77OoYZ/7lKD2LqKiveaOUmn0GF4rMYYL5jkj46Q+564zbfWHbH9Q7YgA0ooDrzk97l95nrPNomqdiUDiaoKBZe+uQdySVnQmjCIwK6jD0HGfh25itzzmBrCGqHjcWkTaq0DpnZyUlEv+imQoqE7H66vrcjh4HTIDBwuN7wfFb42aMWaSzl5oS/d+vfEwClMFUTXscz/5z2biRWYBljwpCInWxfwNyC+tIj9pByJaHGwMpGK4XYdNEtRi3zwN9S0RWMAvML7Tekvw5IuWofD+IucLXzsA47SKlfQwOpeJfM0xRl7bJ53VTvblWtfDB//5aZ43X0AHn+xGdH0c2mCEzlIKCADFI6yM9h8bVNL1ghLtIj0elUptL2na+aXEiIGgrUOJg63qLq/5sdcGCU7GI38C96YyZFY7eK7N+0Ft8gw3+nhvJU+k5hAm0idimfi53de+q7sc05xXNg6av3+yjyBfGjLnpiEUQiBfDfOlnvRZ9cwlZK08/PFHKsH3vtQhYcXJeWg4n7XglS9MjzYlwS9qiwRLZCKlFeAyAGQ/zWz/EYCyYG2GMUvshyBMO3mTI9HHHmivaHjFtCsfjBuP5WVaDALzsHwvC1hA4B/3d7cv2TDCmQ4w2KPLbOhzXttGhEYyUXPopjtcYh9FoFM=
