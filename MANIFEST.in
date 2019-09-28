@@ -1,3 +1,18 @@
-include *.txt
-include LICENSE
+
+# Include README(s)
+include README.md CONTRIBUTING.md
+
+# Include all .py files under main directory
 recursive-include drbert *.py
+
+# Include license file
+include LICENSE
+
+# Include config file(s)
+global-include *.ini *.yml .coveragerc
+
+# Don't include .tox directory
+prune .tox
+
+# Don't include pycache or .pyc files
+global-exclude __pycache__ *.pyc 
