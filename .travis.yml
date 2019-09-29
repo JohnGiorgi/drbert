@@ -26,12 +26,10 @@ matrix:
       python: 3.7
       env: TOXENV=py
 
-install: 
-  - pip install tox
-  - pip install codacy-coverage
+install: pip install tox
 
 script: tox
 
 after_success:
   # Push coverage to Codacy for unit test jobs
-  - test $TOXENV = "py" && python-codacy-coverage -r coverage.xml
+  - test $TOXENV = "py" && pip install codacy-coverage && python-codacy-coverage -r coverage.xml
