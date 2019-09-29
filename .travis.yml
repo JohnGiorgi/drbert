@@ -1,9 +1,12 @@
 language: python
 os: linux
 
-# CODACY_PROJECT_TOKEN, required for pushing code coverage to Codacy.
-global:
-  - secure: hIquJWIC9pgChbG85b7dMjtp77OoYZ/7lKD2LqKiveaOUmn0GF4rMYYL5jkj46Q+564zbfWHbH9Q7YgA0ooDrzk97l95nrPNomqdiUDiaoKBZe+uQdySVnQmjCIwK6jD0HGfh25itzzmBrCGqHjcWkTaq0DpnZyUlEv+imQoqE7H66vrcjh4HTIDBwuN7wfFb42aMWaSzl5oS/d+vfEwClMFUTXscz/5z2biRWYBljwpCInWxfwNyC+tIj9pByJaHGwMpGK4XYdNEtRi3zwN9S0RWMAvML7Tekvw5IuWofD+IucLXzsA47SKlfQwOpeJfM0xRl7bJ53VTvblWtfDB//5aZ43X0AHn+xGdH0c2mCEzlIKCADFI6yM9h8bVNL1ghLtIj0elUptL2na+aXEiIGgrUOJg63qLq/5sdcGCU7GI38C96YyZFY7eK7N+0Ft8gw3+nhvJU+k5hAm0idimfi53de+q7sc05xXNg6av3+yjyBfGjLnpiEUQiBfDfOlnvRZ9cwlZK08/PFHKsH3vtQhYcXJeWg4n7XglS9MjzYlwS9qiwRLZCKlFeAyAGQ/zWz/EYCyYG2GMUvshyBMO3mTI9HHHmivaHjFtCsfjBuP5WVaDALzsHwvC1hA4B/3d7cv2TDCmQ4w2KPLbOhzXttGhEYyUXPopjtcYh9FoFM=
+env:
+  global:
+    # CODACY_PROJECT_TOKEN, required for pushing code coverage to Codacy.
+    - secure: ZX9h0lCL5XPelehb350rzmZHec/6f/3acfXIsTruEkajogh3yzo7FmxyVKssc3FLXJtTgVzBYaVW+dD6sX1t5omJz37EV9tn5WK2EvECF7gACKdBnf4WMf4c2sZ5rs93RGwfFuPtuKEirDV77R5qPnLSQKAzfnMcIQPfUA88t8EhWqon9a0j6kSZTuFG+tRhYxumuWXSUhrfsW/mEgBWjt3PKlTemnx4R4u3Vb2tx7yJM7XARAXJtFjrSWdi6aj4zs0WtvmXhrwuE1YxQAKkcEcWGZb18J1uhAPR1/9sEfGvso6M7YrtFZhCtccFydqXI0vRdU8/9+h0gsNae/JTsd+3LPJuVm8CvPdziZK7QbnrUedxZeNw7KIf0P37UoIh7kdoU1NG+RZuC4MLc1sT0GXAEaHCLJw/VWH9nRO+aKf4dRzXWOKoDU6WzwYIbjoE0D//nIaECUymEvThNzRd4+0h5p1ZyzHugktRhGXPrKlClfUFpnRWr5RaNroPRSPX92i3+e71ia2TUHtefjyR/W6y+0PthrEa1CibIR/dcxI5fnmpj3gk9Deo7RgZ38WPUnimzJYbns4jR6zY9enOkqWlS2PlNvVTGyN6uvUerdNsbywJvmFtK1H9Z/H4AYlizjGm0Ryf/1kkuuUTvnP7JrM9AlnQD7RuuLmJ/6pXVeg=
+    # Hotfix, see: https://github.com/travis-ci/travis-ci/issues/7940#issuecomment-496091279
+    - BOTO_CONFIG=/dev/null
 
 # Because we are using tox as our build script, we must manually provide the matrix.
 # See: https://docs.travis-ci.com/user/languages/python/#using-tox-as-the-build-script
