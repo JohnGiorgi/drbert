@@ -32,4 +32,4 @@ script: tox
 
 after_success:
   # Push coverage to Codacy for unit test jobs
-  - [[ $TOXENV = "py" ]] && ( pip install codacy-coverage; python-codacy-coverage -r coverage.xml )
+  - "[[ $TOXENV = 'py' ]] && ( pip install codacy-coverage; python-codacy-coverage -r coverage.xml )"
