@@ -21,10 +21,10 @@ matrix:
       env: TOXENV=pyroma
     - name: "run unit tests against python 3.6"
       python: 3.6
-      env: TOXENV='{py, clean, report}'
+      env: TOXENV='{clean, py, report}'
     - name: "run unit tests against python 3.7"
       python: 3.7
-      env: TOXENV='{py, clean, report}'
+      env: TOXENV='{clean, py, report}'
 
 install: pip install tox
 
