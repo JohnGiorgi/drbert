@@ -1,0 +1,9 @@
+[run]
+omit =
+  # omit test files themselves
+  drbert/tests/*
+  # omit the file of constants
+  drbert/constants.py
+  # omit any init files
+  drbert/__init__.py
+  drbert/*/__init__.py

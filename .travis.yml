@@ -1,0 +1,35 @@
+language: python
+os: linux
+
+env:
+  global:
+    # CODACY_PROJECT_TOKEN, required for pushing code coverage to Codacy.
+    - secure: ZX9h0lCL5XPelehb350rzmZHec/6f/3acfXIsTruEkajogh3yzo7FmxyVKssc3FLXJtTgVzBYaVW+dD6sX1t5omJz37EV9tn5WK2EvECF7gACKdBnf4WMf4c2sZ5rs93RGwfFuPtuKEirDV77R5qPnLSQKAzfnMcIQPfUA88t8EhWqon9a0j6kSZTuFG+tRhYxumuWXSUhrfsW/mEgBWjt3PKlTemnx4R4u3Vb2tx7yJM7XARAXJtFjrSWdi6aj4zs0WtvmXhrwuE1YxQAKkcEcWGZb18J1uhAPR1/9sEfGvso6M7YrtFZhCtccFydqXI0vRdU8/9+h0gsNae/JTsd+3LPJuVm8CvPdziZK7QbnrUedxZeNw7KIf0P37UoIh7kdoU1NG+RZuC4MLc1sT0GXAEaHCLJw/VWH9nRO+aKf4dRzXWOKoDU6WzwYIbjoE0D//nIaECUymEvThNzRd4+0h5p1ZyzHugktRhGXPrKlClfUFpnRWr5RaNroPRSPX92i3+e71ia2TUHtefjyR/W6y+0PthrEa1CibIR/dcxI5fnmpj3gk9Deo7RgZ38WPUnimzJYbns4jR6zY9enOkqWlS2PlNvVTGyN6uvUerdNsbywJvmFtK1H9Z/H4AYlizjGm0Ryf/1kkuuUTvnP7JrM9AlnQD7RuuLmJ/6pXVeg=
+    # Hotfix, see: https://github.com/travis-ci/travis-ci/issues/7940#issuecomment-496091279
+    - BOTO_CONFIG=/dev/null
+
+# Because we are using tox as our build script, we must manually provide the matrix.
+# See: https://docs.travis-ci.com/user/languages/python/#using-tox-as-the-build-script
+matrix:
+  include:
+    # Manifest and Pyroma checks should be python independent, choose latest.
+    - name: "check manifest"
+      python: 3.7
+      env: TOXENV=manifest
+    - name: "check package friendliness with pyroma"
+      python: 3.7
+      env: TOXENV=pyroma
+    - name: "run unit tests against python 3.6"
+      python: 3.6
+      env: TOXENV='{clean, py, report}'
+    - name: "run unit tests against python 3.7"
+      python: 3.7
+      env: TOXENV='{clean, py, report}'
+
+install: pip install tox
+
+script: tox
+
+after_success:
+  # Push coverage to Codacy for unit test jobs
+  - "[[ $TOXENV = '{clean, py, report}' ]] && ( pip install codacy-coverage; python-codacy-coverage -r coverage.xml )"
