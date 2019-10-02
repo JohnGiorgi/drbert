@@ -341,7 +341,8 @@ def evaluate(args, model, tokenizer, dataset, task="deid"):
                 # Need to accumulate these for evaluation
                 labels.append(inputs['labels'])
                 predictions.append(logits.argmax(dim=-1))
-                if task == 'deid': orig_tok_mask.append(batch[3])
+                if task == 'deid':
+                    orig_tok_mask.append(batch[3])
 
         if task == 'deid':
             labels = torch.cat(labels)
@@ -406,7 +407,8 @@ def evaluate_cohort(labels, predictions):
         predictions (list): A list of Tensors containing the predicted labels for each example.
         average (flag): Set micro or macro mode of eval
     Returns:
-        scores (dict): A dictionairy of dictionaries of diseases and their scores (precision, recall, F1, support) using sklearn precision_recall_fscore_support
+        scores (dict): A dictionairy of dictionaries of diseases and their scores
+            (precision, recall, F1, support) using sklearn precision_recall_fscore_support
     """
     idx_to_tag = eval_utils.reverse_dict(COHORT_DISEASE_CONSTANTS)
 
