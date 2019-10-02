@@ -1,7 +1,7 @@
 import logging
 
-from pytorch_transformers import BertModel
-from pytorch_transformers.modeling_bert import BertPreTrainedModel
+from transformers import BertModel
+from transformers.modeling_bert import BertPreTrainedModel
 
 from .heads import DocumentClassificationHead
 from .heads import SequenceLabellingHead

@@ -3,7 +3,7 @@ import os
 
 import spacy
 import torch
-from pytorch_transformers import BertTokenizer
+from transformers import BertTokenizer
 from tqdm import tqdm
 
 from .constants import (COHORT_DISEASE_CONSTANTS,

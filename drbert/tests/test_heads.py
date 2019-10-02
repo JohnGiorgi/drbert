@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-from pytorch_transformers import BertModel
+from transformers import BertModel
 from random import randint
 
 VOCAB = 30000  # BERT has a vocab of ~30K
@@ -71,8 +71,8 @@ class TestSequenceLabellingHead(object):
 
         input_ids = torch.randint(VOCAB, (batch_size, sequence_length))
         head_mask = torch.ones(bert_config.num_attention_heads)
-        # Turn on one head off random
-        masked_head = randint(0, head_mask.size(-1))
+        # Turn on one head at random
+        masked_head = torch.randint(0, head_mask.size(-1), ())
         head_mask[masked_head] = 0
 
         outputs = head(bert, input_ids, head_mask=head_mask)
@@ -168,8 +168,8 @@ class TestDocumentClassificationHead(object):
 
         input_ids = torch.randint(VOCAB, (batch_size, sequence_length))
         head_mask = torch.ones(bert_config.num_attention_heads)
-        # Turn on one head off random
-        masked_head = randint(0, head_mask.size(-1))
+        # Turn on one head at random
+        masked_head = torch.randint(0, head_mask.size(-1), ())
         head_mask[masked_head] = 0
 
         outputs = head(bert, input_ids, head_mask=head_mask)
@@ -185,6 +185,7 @@ class TestDocumentClassificationHead(object):
             assert attention_weights.size() == output_shape
             for head, weights in enumerate(attention_weights):
                 if head == masked_head:
+                    print(weights, torch.zeros_like(weights))
                     assert torch.equal(weights, torch.zeros_like(weights))
                 else:
                     assert not torch.equal(weights, torch.zeros_like(weights))

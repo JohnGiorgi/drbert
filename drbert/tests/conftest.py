@@ -1,7 +1,7 @@
 import pytest
-from pytorch_transformers import BertConfig
-from pytorch_transformers import BertModel
-from pytorch_transformers import BertTokenizer
+from transformers import BertConfig
+from transformers import BertModel
+from transformers import BertTokenizer
 
 from ..heads import DocumentClassificationHead
 from ..heads import SequenceLabellingHead

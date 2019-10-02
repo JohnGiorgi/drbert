@@ -9,9 +9,9 @@ from itertools import zip_longest
 
 import numpy as np
 import torch
-from pytorch_transformers import (AdamW, AutoConfig, AutoTokenizer,
+from transformers import (AdamW, AutoConfig, AutoTokenizer,
                                   WarmupLinearSchedule)
-from pytorch_transformers.modeling_utils import WEIGHTS_NAME
+from transformers.modeling_utils import WEIGHTS_NAME
 from sklearn.metrics import precision_recall_fscore_support
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
@@ -53,7 +53,7 @@ def prepare_optimizer_and_scheduler(args, model, t_total):
     References:
         - https://raberrytv.wordpress.com/2017/10/29/pytorch-weight-decay-made-easy/
     """
-    # These are hardcoded because Pytorch-Transformers named them to match to TF implementations
+    # These are hardcoded because transformers named them to match to TF implementations
     decay_blacklist = {'LayerNorm.bias', 'LayerNorm.weight'}
 
     decay, no_decay = [], []
@@ -96,7 +96,7 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
             partition of the Cohort Identification dataset.
         model (nn.Module): The multi-task patient note de-identification and cohort classification
             model.
-        tokenizer (BertTokenizer): A pytorch-transformers tokenizer object.
+        tokenizer (BertTokenizer): A transformers tokenizer object.
 
     Raises:
         ImportError if args.fp16 but Apex is not installed.
@@ -195,7 +195,7 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
                           }
 
                 outputs = model(**inputs)
-                loss = outputs[0]  # outputs are always tuple in pytorch-transformers (see doc)
+                loss = outputs[0]  # outputs are always tuple in transformers (see doc)
 
                 if args.n_gpu > 1:
                     # mean() to average on multi-gpu parallel (not distributed) training
@@ -655,7 +655,7 @@ def main():
                  sorted(glob.glob(args.output_dir + '/**/' + WEIGHTS_NAME, recursive=True))
                  ]
             # Reduce model loading logs
-            logging.getLogger("pytorch_transformers.modeling_utils").setLevel(logging.WARN)
+            logging.getLogger("transformers.modeling_utils").setLevel(logging.WARN)
 
         logger.info("Evaluate the following checkpoints: %s", checkpoints)
 

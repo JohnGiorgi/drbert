@@ -27,6 +27,7 @@ setuptools.setup(
     ],
     python_requires='>=3.6',
     install_requires=[
+        'torch>=1.2.0',
         'transformers>=2.0.0',
         'spacy>=2.1.4',
         'Keras-Preprocessing>=1.1.0',
