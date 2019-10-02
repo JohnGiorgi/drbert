@@ -1,7 +1,10 @@
 import pytest
-from pytorch_transformers import BertTokenizer
+from transformers import BertConfig
+from transformers import BertModel
+from transformers import BertTokenizer
 
-from ..modules.sequence_labelling_head import SequenceLabellingHead
+from ..heads import DocumentClassificationHead
+from ..heads import SequenceLabellingHead
 
 
 @pytest.fixture
@@ -14,8 +17,46 @@ def bert_tokenizer():
 
 
 @pytest.fixture
-def sequence_labelling_head():
-    batch_size, in_features, out_features = 32, 768, 10
-    head = SequenceLabellingHead(in_features, out_features)
+def bert_config():
+    """Config for pre-trained BERT model.
+    """
+    bert_config = BertConfig.from_pretrained('bert-base-uncased')
 
-    return batch_size, in_features, out_features, head
+    return bert_config
+
+
+@pytest.fixture
+def bert(bert_config):
+    """Pre-trained BERT model.
+    """
+    bert = BertModel(bert_config)
+
+    return bert
+
+
+@pytest.fixture
+def sequence_labelling_head(bert_config):
+    """Initialized sequence labelling head.
+    """
+    batch_size, sequence_length, num_labels = 1, 8, 10
+    # TODO (John): This will change when we decouple the model from these tasks.
+    bert_config.__dict__['num_deid_labels'] = num_labels
+
+    head = SequenceLabellingHead(bert_config)
+
+    return batch_size, sequence_length, num_labels, head
+
+
+@pytest.fixture
+def document_classification_head(bert_config):
+    """Initialized sequence labelling head.
+    """
+    batch_size, sequence_length, num_labels = 1, 8, (16, 4)
+    cohort_ffnn_size = 64
+    # TODO (John): This will change when we decouple the model from these tasks.
+    bert_config.__dict__['num_cohort_labels'] = num_labels
+    bert_config.__dict__['cohort_ffnn_size'] = cohort_ffnn_size
+
+    head = DocumentClassificationHead(bert_config)
+
+    return batch_size, sequence_length, num_labels, head

@@ -9,9 +9,9 @@ from itertools import zip_longest
 
 import numpy as np
 import torch
-from pytorch_transformers import (AdamW, AutoConfig, AutoTokenizer,
+from transformers import (AdamW, AutoConfig, AutoTokenizer,
                                   WarmupLinearSchedule)
-from pytorch_transformers.modeling_utils import WEIGHTS_NAME
+from transformers.modeling_utils import WEIGHTS_NAME
 from sklearn.metrics import precision_recall_fscore_support
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
@@ -22,7 +22,7 @@ from .constants import (COHORT_DISEASE_CONSTANTS, COHORT_DISEASE_LIST,
                         COHORT_INTUITIVE_LABEL_CONSTANTS,
                         COHORT_TEXTUAL_LABEL_CONSTANTS, DEID_LABELS, OUTSIDE,
                         PHI)
-from .model import BertForJointDeIDAndCohortID
+from .model import DrBERT
 from .utils import data_utils, eval_utils
 
 logger = logging.getLogger(__name__)
@@ -48,12 +48,12 @@ def prepare_optimizer_and_scheduler(args, model, t_total):
 
     Returns:
         A 2-tuple containing an initialized `AdamW` optimizer and `WarmupLinearSchedule` scheduler
-        for the training of a BertForJointDeIDAndCohortID model (`model`).
+        for the training of a DrBERT model (`model`).
 
     References:
         - https://raberrytv.wordpress.com/2017/10/29/pytorch-weight-decay-made-easy/
     """
-    # These are hardcoded because Pytorch-Transformers named them to match to TF implementations
+    # These are hardcoded because transformers named them to match to TF implementations
     decay_blacklist = {'LayerNorm.bias', 'LayerNorm.weight'}
 
     decay, no_decay = [], []
@@ -96,7 +96,7 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
             partition of the Cohort Identification dataset.
         model (nn.Module): The multi-task patient note de-identification and cohort classification
             model.
-        tokenizer (BertTokenizer): A pytorch-transformers tokenizer object.
+        tokenizer (BertTokenizer): A transformers tokenizer object.
 
     Raises:
         ImportError if args.fp16 but Apex is not installed.
@@ -195,7 +195,7 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
                           }
 
                 outputs = model(**inputs)
-                loss = outputs[0]  # outputs are always tuple in pytorch-transformers (see doc)
+                loss = outputs[0]  # outputs are always tuple in transformers (see doc)
 
                 if args.n_gpu > 1:
                     # mean() to average on multi-gpu parallel (not distributed) training
@@ -341,7 +341,8 @@ def evaluate(args, model, tokenizer, dataset, task="deid"):
                 # Need to accumulate these for evaluation
                 labels.append(inputs['labels'])
                 predictions.append(logits.argmax(dim=-1))
-                if task == 'deid': orig_tok_mask.append(batch[3])
+                if task == 'deid':
+                    orig_tok_mask.append(batch[3])
 
         if task == 'deid':
             labels = torch.cat(labels)
@@ -406,7 +407,8 @@ def evaluate_cohort(labels, predictions):
         predictions (list): A list of Tensors containing the predicted labels for each example.
         average (flag): Set micro or macro mode of eval
     Returns:
-        scores (dict): A dictionairy of dictionaries of diseases and their scores (precision, recall, F1, support) using sklearn precision_recall_fscore_support
+        scores (dict): A dictionairy of dictionaries of diseases and their scores
+            (precision, recall, F1, support) using sklearn precision_recall_fscore_support
     """
     idx_to_tag = eval_utils.reverse_dict(COHORT_DISEASE_CONSTANTS)
 
@@ -589,17 +591,18 @@ def main():
     # Here, we add any additional configs to the Pytorch Transformers config file. These will be
     # saved to a `output_dir/config.json` file when we call model.save_pretrained(output_dir)
     config.__dict__['num_deid_labels'] = len(DEID_LABELS)
-    config.__dict__['num_cohort_disease'] = len(COHORT_DISEASE_LIST)
     # Num of labels is dependent on whether we are running the textual or intuitive analysis
     if args.cohort_type:
-        config.__dict__['num_cohort_classes'] = len(COHORT_TEXTUAL_LABEL_CONSTANTS)
+        config.__dict__['num_cohort_labels'] = \
+            len(COHORT_DISEASE_LIST), len(COHORT_TEXTUAL_LABEL_CONSTANTS)
     else:
-        config.__dict__['num_cohort_classes'] = len(COHORT_INTUITIVE_LABEL_CONSTANTS)
+        config.__dict__['num_cohort_labels'] = \
+            len(COHORT_DISEASE_LIST), len(COHORT_INTUITIVE_LABEL_CONSTANTS)
     config.__dict__['cohort_ffnn_size'] = 512
     config.__dict__['max_batch_size'] = args.train_batch_size
     config.__dict__['deid_class_weights'] = deid_class_weights
 
-    model = BertForJointDeIDAndCohortID.from_pretrained(
+    model = DrBERT.from_pretrained(
         pretrained_model_name_or_path=args.model_name_or_path,
         config=config
     )
@@ -635,7 +638,7 @@ def main():
         torch.save(args, os.path.join(args.output_dir, 'training_args.bin'))
 
         # Load a trained model and vocabulary that you have fine-tuned
-        model = BertForJointDeIDAndCohortID.from_pretrained(
+        model = DrBERT.from_pretrained(
             pretrained_model_name_or_path=args.model_name_or_path,
             config=config
         )
@@ -652,7 +655,7 @@ def main():
                  sorted(glob.glob(args.output_dir + '/**/' + WEIGHTS_NAME, recursive=True))
                  ]
             # Reduce model loading logs
-            logging.getLogger("pytorch_transformers.modeling_utils").setLevel(logging.WARN)
+            logging.getLogger("transformers.modeling_utils").setLevel(logging.WARN)
 
         logger.info("Evaluate the following checkpoints: %s", checkpoints)
 
@@ -660,7 +663,7 @@ def main():
             # Reload the model
             global_step = checkpoint.split('-')[-1] if len(checkpoints) > 1 else ""
             # TODO Change AutoModel to whatever we have named our BERT model
-            model = BertForJointDeIDAndCohortID.from_pretrained(
+            model = DrBERT.from_pretrained(
                 pretrained_model_name_or_path=args.model_name_or_path,
                 config=config
             )
