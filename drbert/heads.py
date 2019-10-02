@@ -5,12 +5,10 @@ from torch.nn import CrossEntropyLoss
 
 class SequenceLabellingHead(torch.nn.Module):
     """A head which can be placed at the output of a language model (such as BERT) to perform
-    document classification tasks.
-
-    # TODO: Finish this docstring.
+    sequence labelling tasks.
 
     Args:
-        config (TODO): TODO
+        config (BertConfig): `BertConfig` class instance with a configuration to build a new model.
 
     Outputs: `Tuple` comprising various elements depending on the configuration (config) and inputs:
         - loss: (optional, returned when `labels` is provided) `torch.FloatTensor` of shape `(1,)`:
@@ -18,19 +16,23 @@ class SequenceLabellingHead(torch.nn.Module):
         - scores: `torch.FloatTensor` of shape `(batch_size, sequence_length, config.num_labels)`
             Classification scores (before SoftMax).
         - hidden_states: (`optional`, returned when `config.output_hidden_states=True`)
-            list of `torch.FloatTensor` (one for the output of each layer + the output of the embeddings)
-            of shape `(batch_size, sequence_length, hidden_size)`:
-            Hidden-states of the model at the output of each layer plus the initial embedding outputs.
+            list of `torch.FloatTensor` (one for the output of each layer + the output of the
+            embeddings) of shape `(batch_size, sequence_length, hidden_size)`:
+            Hidden-states of the model at the output of each layer plus the initial embedding
+            outputs.
         - attentions: (`optional`, returned when `config.output_attentions=True`)
-            list of `torch.FloatTensor` (one for each layer) of shape `(batch_size, num_heads, sequence_length, sequence_length)`:
-            Attentions weights after the attention softmax, used to compute the weighted average in the self-attention heads.
+            list of `torch.FloatTensor` (one for each layer) of shape `(batch_size, num_heads,
+            sequence_length, sequence_length)`: Attentions weights after the attention softmax, used
+            to compute the weighted average in the self-attention heads.
 
     Examples:
-        >>> tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
-        >>> model = SequenceLabellingHead()
+        >>> tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased')
+        >>> config = AutoConfig.from_pretrained('bert-base-uncased')
+        >>> bert = AutoModel.from_pretrained('bert-base-uncased')
+        >>> head = SequenceLabellingHead()
         >>> input_ids = torch.tensor(tokenizer.encode("Hello, my dog is cute")).unsqueeze(0)  # Batch size 1
         >>> labels = torch.tensor([1] * input_ids.size(1)).unsqueeze(0)  # Batch size 1
-        >>> outputs = model(input_ids, labels=labels)
+        >>> outputs = head(bert, input_ids, labels=labels)
         >>> loss, scores = outputs[:2]
     """
     def __init__(self, config):
@@ -59,7 +61,7 @@ class SequenceLabellingHead(torch.nn.Module):
                 active_labels = labels.view(-1)[active_loss]
                 loss = loss_fct(active_logits, active_labels)
             else:
-                loss = loss_fct(logits.view(-1, self.self.num_labels), labels.view(-1))
+                loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
             outputs = (loss,) + outputs
 
         return outputs  # (loss), scores, (hidden_states), (attentions)
@@ -69,11 +71,8 @@ class DocumentClassificationHead(torch.nn.Module):
     """A head which can be placed at the output of a language model (such as BERT) to perform
     document classification tasks.
 
-    # TODO: Finish this docstring.
-
     Args:
-        config (todo): todo
-        out_features (int): The size of the feature dimension of the output.
+        config (BertConfig): `BertConfig` class instance with a configuration to build a new model.
 
     Outputs: `Tuple` comprising various elements depending on the configuration (config) and inputs:
         - loss: (optional, returned when `labels` is provided) `torch.FloatTensor` of shape `(1,)`:
@@ -81,19 +80,22 @@ class DocumentClassificationHead(torch.nn.Module):
         - scores: `torch.FloatTensor` of shape `(batch_size, sequence_length, config.num_labels)`
             Classification scores (before SoftMax).
         - hidden_states: (`optional`, returned when `config.output_hidden_states=True`)
-            list of `torch.FloatTensor` (one for the output of each layer + the output of the embeddings)
-            of shape `(batch_size, sequence_length, hidden_size)`:
-            Hidden-states of the model at the output of each layer plus the initial embedding outputs.
+            list of `torch.FloatTensor` (one for the output of each layer + the output of the
+            embeddings) of shape `(batch_size, sequence_length, hidden_size)`: Hidden-states of the
+            model at the output of each layer plus the initial embedding outputs.
         - attentions: (`optional`, returned when `config.output_attentions=True`)
-            list of `torch.FloatTensor` (one for each layer) of shape `(batch_size, num_heads, sequence_length, sequence_length)`:
-            Attentions weights after the attention softmax, used to compute the weighted average in the self-attention heads.
+            list of `torch.FloatTensor` (one for each layer) of shape `(batch_size, num_heads,
+            sequence_length, sequence_length)`: Attentions weights after the attention softmax, used
+            to compute the weighted average in the self-attention heads.
 
     Examples:
-        >>> tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
-        >>> model = BertForTokenClassification.from_pretrained('bert-base-uncased')
+        >>> tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased')
+        >>> config = AutoConfig.from_pretrained('bert-base-uncased')
+        >>> bert = AutoModel.from_pretrained('bert-base-uncased')
+        >>> head = DocumentClassificationHead()
         >>> input_ids = torch.tensor(tokenizer.encode("Hello, my dog is cute")).unsqueeze(0)  # Batch size 1
-        >>> labels = torch.tensor(torch.ones()).unsqueeze(0)  # Batch size 1
-        >>> outputs = model(input_ids, labels=labels)
+        >>> labels = torch.ones(0, 4, (16, 4))  # E.g. 16 diseases, with 4 classes each.
+        >>> outputs = head(bert, input_ids, labels=labels)
         >>> loss, scores = outputs[:2]
     """
     def __init__(self, config):
@@ -123,7 +125,7 @@ class DocumentClassificationHead(torch.nn.Module):
         cls_output = self.dropout(cls_output)
 
         logits = self.classifier(cls_output)
-        logits = logits.view(self.num_labels[0] * self.num_labels[1])
+        logits = logits.view(self.num_labels)
 
         outputs = (logits,) + outputs[2:]  # add hidden states and attention if they are here
         if labels is not None:
