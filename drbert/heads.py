@@ -105,26 +105,27 @@ class DocumentClassificationHead(torch.nn.Module):
         self.num_labels = config.num_cohort_labels
 
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        self.classifier = nn.Sequential(
-            nn.Linear(config.hidden_size, config.cohort_ffnn_size),
-            nn.ReLU(),
-            nn.Dropout(config.hidden_dropout_prob),
-            nn.Linear(config.cohort_ffnn_size, config.cohort_ffnn_size // 2),
-            nn.ReLU(),
-            nn.Dropout(config.hidden_dropout_prob),
-            nn.Linear(config.cohort_ffnn_size // 2, self.num_labels[0] * self.num_labels[1])
+        self.lstm = nn.LSTM(
+            input_size=config.hidden_size,
+            hidden_size=config.cohort_ffnn_size,
+            num_layers=1,
+            batch_first=True,
+            bidirectional=True,
         )
+
+        self.classifier = nn.Linear(config.cohort_ffnn_size * 2, self.num_labels[0] * self.num_labels[1])
 
     def forward(self, bert, input_ids, attention_mask=None, token_type_ids=None, position_ids=None,
                 head_mask=None, labels=None):
         outputs = bert(input_ids, attention_mask, token_type_ids, position_ids, head_mask)
+        # Get pooled outputs
         cls_output = outputs[1]
+        # cls_output = self.dropout(cls_output)
 
-        # Pool outputs
-        cls_output = torch.sum(cls_output, dim=0)
-        cls_output = self.dropout(cls_output)
+        reccurent_output, _ = self.lstm(cls_output.unsqueeze(0))  # batch dim of 1
+        reccurent_output = reccurent_output[:, -1, :].squeeze(0)  # hidden state of final timestep
 
-        logits = self.classifier(cls_output)
+        logits = self.classifier(reccurent_output)
         logits = logits.view(self.num_labels)
 
         outputs = (logits,) + outputs[2:]  # add hidden states and attention if they are here
