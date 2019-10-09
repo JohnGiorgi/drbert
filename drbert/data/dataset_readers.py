@@ -25,7 +25,7 @@ class DatasetReader(object):
                                  f" partitions ({len(partitions)})")
 
         self.path = path
-        self.path = partitions
+        self.partitions = partitions
         self.tokenizer = tokenizer
         self.batch_sizes = batch_sizes
         self.maxlen = maxlen
