@@ -1,8 +1,11 @@
 import pytest
+from pkg_resources import resource_filename
 from transformers import BertConfig
 from transformers import BertModel
 from transformers import BertTokenizer
 
+from ..data.dataset_readers import DatasetReader
+from ..data.dataset_readers import NLIDatasetReader
 from ..heads import DocumentClassificationHead
 from ..heads import SequenceLabellingHead
 
@@ -60,3 +63,43 @@ def document_classification_head(bert_config):
     head = DocumentClassificationHead(bert_config)
 
     return batch_size, sequence_length, num_labels, head
+
+
+@pytest.fixture
+def dataset_reader(bert_tokenizer):
+    """Initialized DatasetReader.
+    """
+    args = {
+        'path':          'totally_arbitrary',
+        'partitions':    {'train': 'totally_arbitrary'},
+        'tokenizer':     bert_tokenizer,
+        'format':        'tsv',
+        'batch_sizes':   (16,),
+        'maxlen':        512,
+        'lower_case': False,
+    }
+
+    dataset_reader = DatasetReader(**args)
+
+    return args, dataset_reader
+
+
+@pytest.fixture
+def nli_dataset_reader(bert_tokenizer):
+    """Initialized NLIDatasetReader.
+    """
+    args = {
+        'path':          resource_filename(__name__, 'resources/snli_1.0'),
+        'partitions':    {'train':      'snli_1.0_train.jsonl',
+                          'validation': 'snli_1.0_dev.jsonl',
+                          'test':       'snli_1.0_test.jsonl'},
+        'tokenizer':     bert_tokenizer,
+        'format':        'json',
+        'batch_sizes':   (16, 256, 256),
+        'maxlen':        512,
+        'lower_case': False,
+    }
+
+    dataset_reader = NLIDatasetReader(**args)
+
+    return args, dataset_reader
