@@ -1,6 +1,7 @@
 import torch
 from torch import nn
 from torch.nn import CrossEntropyLoss
+from torch.nn import MSELoss
 
 
 class SequenceLabellingHead(torch.nn.Module):
@@ -108,8 +109,9 @@ class DocumentClassificationHead(torch.nn.Module):
         self.lstm = nn.LSTM(
             input_size=config.hidden_size,
             hidden_size=config.cohort_ffnn_size,
-            num_layers=1,
+            num_layers=2,
             batch_first=True,
+            dropout=config.hidden_dropout_prob,
             bidirectional=True,
         )
 
@@ -119,20 +121,26 @@ class DocumentClassificationHead(torch.nn.Module):
                 head_mask=None, labels=None):
         outputs = bert(input_ids, attention_mask, token_type_ids, position_ids, head_mask)
         # Get pooled outputs
-        cls_output = outputs[1]
-        # cls_output = self.dropout(cls_output)
+        pooled_outputs = outputs[1]
+        pooled_outputs = self.dropout(pooled_outputs)
 
-        reccurent_output, _ = self.lstm(cls_output.unsqueeze(0))  # batch dim of 1
-        reccurent_output = reccurent_output[:, -1, :].squeeze(0)  # hidden state of final timestep
+        reccurent_outputs, _ = self.lstm(pooled_outputs.unsqueeze(0))  # batch dim of 1
+        reccurent_outputs = reccurent_outputs[:, -1, :].squeeze(0)  # hidden state of final timestep
 
-        logits = self.classifier(reccurent_output)
+        logits = self.classifier(reccurent_outputs)
         logits = logits.view(self.num_labels)
 
         outputs = (logits,) + outputs[2:]  # add hidden states and attention if they are here
         if labels is not None:
-            loss_fct = CrossEntropyLoss()
-
-            loss = loss_fct(logits.view(*self.num_labels), labels.view(-1))
+            # TODO (John): This was copied from the transformers library, I haven't tested it on
+            # a dataset with one label.
+            # See: https://github.com/huggingface/transformers/blob/8fcc6507ce9d0922ddb60f4a31d4b9a839de1270/transformers/modeling_bert.py#L907
+            if len(self.num_labels) == 1:
+                loss_fct = MSELoss()
+                loss = loss_fct(logits.view(-1), labels.view(-1))
+            else:
+                loss_fct = CrossEntropyLoss()
+                loss = loss_fct(logits.view(self.num_labels), labels.view(-1))
             outputs = (loss,) + outputs
 
         return outputs  # (loss), scores, (hidden_states), (attentions)
