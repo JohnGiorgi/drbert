@@ -6,6 +6,8 @@ from transformers import BertTokenizer
 
 from ..data.dataset_readers import DatasetReader
 from ..data.dataset_readers import NLIDatasetReader
+from ..data.dataset_readers import RelationClassificationDatasetReader
+from ..data.dataset_readers import SequenceLabellingDatasetReader
 from ..heads import DocumentClassificationHead
 from ..heads import SequenceLabellingHead
 
@@ -74,12 +76,53 @@ def dataset_reader(bert_tokenizer):
         'partitions':    {'train': 'totally_arbitrary'},
         'tokenizer':     bert_tokenizer,
         'format':        'tsv',
+        'skip_header':   False,
         'batch_sizes':   (16,),
-        'maxlen':        512,
-        'lower_case': False,
+        'fix_length':    512,
+        'lower':         False,
     }
 
     dataset_reader = DatasetReader(**args)
+
+    return args, dataset_reader
+
+
+@pytest.fixture
+def sequence_labelling_dataset_reader(bert_tokenizer):
+    """Initialized SequenceLabellingDatasetReader.
+    """
+    args = {
+        'path':          resource_filename(__name__, 'resources/BC5CDR'),
+        'partitions':    {'train':      'train.tsv',
+                          'validation': 'devel.tsv',
+                          'test':       'test.tsv'},
+        'tokenizer':     bert_tokenizer,
+        'batch_sizes':   (16, 256, 256),
+        'fix_length':    512,
+        'lower':         False,
+    }
+
+    dataset_reader = SequenceLabellingDatasetReader(**args)
+
+    return args, dataset_reader
+
+
+@pytest.fixture
+def relation_classification_dataset_reader(bert_tokenizer):
+    """Initialized RelationClassificationDatasetReader.
+    """
+    args = {
+        'path':          resource_filename(__name__, 'resources/ChemProt'),
+        'partitions':    {'train':      'train.tsv',
+                          'validation': 'dev.tsv',
+                          'test':       'test.tsv'},
+        'tokenizer':     bert_tokenizer,
+        'batch_sizes':   (16, 256, 256),
+        'fix_length':    512,
+        'lower':         False,
+    }
+
+    dataset_reader = RelationClassificationDatasetReader(**args)
 
     return args, dataset_reader
 
@@ -94,10 +137,9 @@ def nli_dataset_reader(bert_tokenizer):
                           'validation': 'snli_1.0_dev.jsonl',
                           'test':       'snli_1.0_test.jsonl'},
         'tokenizer':     bert_tokenizer,
-        'format':        'json',
         'batch_sizes':   (16, 256, 256),
-        'maxlen':        512,
-        'lower_case': False,
+        'fix_length':    512,
+        'lower':         False,
     }
 
     dataset_reader = NLIDatasetReader(**args)
