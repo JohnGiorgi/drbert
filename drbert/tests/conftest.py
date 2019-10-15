@@ -4,6 +4,7 @@ from transformers import BertModel
 from transformers import BertTokenizer
 
 from ..heads import DocumentClassificationHead
+from ..heads import SequenceClassificationHead
 from ..heads import SequenceLabellingHead
 
 
@@ -43,6 +44,19 @@ def sequence_labelling_head(bert_config):
     bert_config.__dict__['num_deid_labels'] = num_labels
 
     head = SequenceLabellingHead(bert_config)
+
+    return batch_size, sequence_length, num_labels, head
+
+
+@pytest.fixture
+def sequence_classification_head(bert_config):
+    """Initialized sequence classification head.
+    """
+    batch_size, sequence_length, num_labels = 1, 8, 2
+    # TODO (John): This will change when we decouple the model from these tasks.
+    bert_config.__dict__['num_labels'] = num_labels
+
+    head = SequenceClassificationHead(bert_config)
 
     return batch_size, sequence_length, num_labels, head
 
