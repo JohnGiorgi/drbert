@@ -211,6 +211,15 @@ class SequenceLabellingDatasetReader(DatasetReader):
             A tuple of `torchtext.data.iterator.BucketIterator` objects, one for each partition
             is `self.partitions`.
         """
+        # Overwrite the parents LABEL field
+        self.LABEL = data.Field(
+            init_token=self.tokenizer.cls_token_id,
+            eos_token=self.tokenizer.sep_token_id,
+            fix_length=self.fix_length,
+            batch_first=True,
+            pad_token=self.tokenizer.pad_token_id,
+        )
+
         fields = [('text', self.TEXT), ('label', self.LABEL)]
 
         # Define the splits. Need path to directory (self.path), and then name of each file.
@@ -226,8 +235,7 @@ class SequenceLabellingDatasetReader(DatasetReader):
             splits, batch_sizes=self.batch_sizes, sort_key=self.sort_key)
 
         # Finally, build the vocab. This "numericalizes" the field.
-        # Assume the first split is 'train'.
-        self.LABEL.build_vocab(splits[0])
+        self.LABEL.build_vocab(*(split.label for split in splits))
 
         return iterators
 
@@ -291,8 +299,63 @@ class RelationClassificationDatasetReader(DatasetReader):
         splits, iterators = super(RelationClassificationDatasetReader, self).textual_to_iterator(fields)
 
         # Finally, build the vocab. This "numericalizes" the field.
-        # Assume the first split is 'train'.
-        self.LABEL.build_vocab(splits[0])
+        self.LABEL.build_vocab(*(split.label for split in splits))
+
+        return iterators
+
+
+class DocumentClassificationDatasetReader(DatasetReader):
+    """TODO
+
+    Example usage:
+        >>> from transformers import AutoTokenizer
+        >>> from dataset_readers import DocumentClassificationDatasetReader
+        >>> partitions={
+                'train': 'train_filename.jsonl',
+                'validation': 'valid_filename.jsonl',
+                'test': 'test_filename.jsonl',
+            }
+        >>> tokenizer = AutoTokenizer.from_pretrained('bert-base-cased')
+        >>> train_iter, valid_iter, test_iter = DocumentClassificationDatasetReader(
+                path='path/to/nli/dataset', partitions=partitions, tokenizer=tokenizer,
+                batch_sizes=(16, 256, 256)
+            ).textual_to_iterator()
+
+    Args:
+        path (str): Common prefix of the splits’ file paths.
+        partitions (dict): A dictionary keyed by partition ('train', 'test', 'validation')
+            containing the suffix to add to `path` for that partition.
+        tokenizer (transformers.PreTrainedTokenizer): The function used to tokenize strings into
+            sequential examples.
+        batch_sizes (tuple): Optional, tuple of batch sizes to use for the different splits, or None
+            to use the same batch_size for all splits. Defaults to None.
+        fix_length (int): Optional, a fixed length that all examples using this field will be padded
+            to, for flexible sequence lengths. Default: 512.
+        lower: (bool): Optional, True if text should be lower cased, False if not. Defaults to
+            False.
+    """
+    def __init__(self, path, partitions, tokenizer, batch_sizes=None, fix_length=512, lower=False):
+        super(RelationClassificationDatasetReader, self).__init__(
+            path=path, partitions=partitions, tokenizer=tokenizer, format='JSON', skip_header=False,
+            batch_sizes=batch_sizes, fix_length=fix_length, lower=lower,
+            # Sort examples according to length of documents
+            sort_key=lambda x: len(x.text)
+        )
+
+    def textual_to_iterator(self):
+        """Does whatever tokenization or processing is necessary to go from textual input to
+        iterators for training and evaluation for a document classification dataset.
+
+        Returns:
+            A tuple of `torchtext.data.iterator.BucketIterator` objects, one for each partition
+            is `self.partitions`.
+        """
+        fields = {'text': ('text', self.TEXT), 'label': ('label', self.LABEL)}
+
+        splits, iterators = super().textual_to_iterator(fields)
+
+        # Finally, build the vocab. This "numericalizes" the field.
+        self.LABEL.build_vocab(*(split.label for split in splits))
 
         return iterators
 
@@ -361,8 +424,7 @@ class NLIDatasetReader(DatasetReader):
         splits, iterators = super(NLIDatasetReader, self).textual_to_iterator(fields)
 
         # Finally, build the vocab. This "numericalizes" the field.
-        # Assume the first split is 'train'.
-        self.LABEL.build_vocab(splits[0])
+        self.LABEL.build_vocab(*(split.label for split in splits))
 
         return iterators
 
