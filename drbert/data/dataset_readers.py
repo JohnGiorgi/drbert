@@ -1,11 +1,5 @@
 from torchtext import data
 from torchtext import datasets
-<<<<<<< HEAD
-from transformers import AutoTokenizer
-
-from ..constants import COHORT_DATA_DIR, COHORT_DISEASE_CONSTANTS
-=======
->>>>>>> 98288b8ca9edc00aa1ff2a156489a1f71ee5c50d
 
 
 class DatasetReader(object):
@@ -35,12 +29,8 @@ class DatasetReader(object):
         ValueError: If batch_sizes is not a tuple or None.
         ValueError: If batch_sizes is not None and `len(batch_sizes) != len(partitions)`.
     """
-<<<<<<< HEAD
-    def __init__(self, path, partitions, tokenizer, label_vocab, batch_sizes=None, maxlen=512, lower_case=False):
-=======
     def __init__(self, path, partitions, tokenizer, format, skip_header=False, batch_sizes=None,
                  fix_length=512, lower=False, sort_key=None):
->>>>>>> 98288b8ca9edc00aa1ff2a156489a1f71ee5c50d
         if batch_sizes is not None:
             if not isinstance(batch_sizes, tuple):
                 raise ValueError(f"'batch_sizes' must be a tuple. Got: {batch_sizes}")
@@ -51,12 +41,8 @@ class DatasetReader(object):
         self.path = path
         self.partitions = partitions
         self.tokenizer = tokenizer
-<<<<<<< HEAD
-        self.label_vocab = label_vocab
-=======
         self.format = format
         self.skip_header = skip_header
->>>>>>> 98288b8ca9edc00aa1ff2a156489a1f71ee5c50d
         self.batch_sizes = batch_sizes
         self.fix_length = fix_length
         self.lower = lower
@@ -99,12 +85,9 @@ class DatasetReader(object):
 
 
 class DocumentClassificationDatasetReader(DatasetReader):
-<<<<<<< HEAD
-    def __init__(self, path, partitions, tokenizer, label_vocab, batch_sizes=None, maxlen=512, lower_case=False):
-        super(DocumentClassificationDatasetReader, self).__init__(
-            path, partitions, tokenizer, label_vocab, batch_sizes, maxlen, lower_case
-=======
-    """TODO
+    """Reads instances from JSON lines file(s) were each line is in the following format:
+
+    {"TEXT": DOCUMENT TEXT, "LABEL": label (if single label task) OR "LABEL_1": label_1, "LABEL_2: label_2, ..., "LABEL_N": label_n (if n-labeled multi-label task)
 
     Example usage:
         >>> from transformers import AutoTokenizer
@@ -132,16 +115,16 @@ class DocumentClassificationDatasetReader(DatasetReader):
             to, for flexible sequence lengths. Default: 512.
         lower: (bool): Optional, True if text should be lower cased, False if not. Defaults to
             False.
+        multi_label_map (dict or list): dict or list containing all fields in the label space as per the jsonl file (for multi-label document classification only). If None, will assume single label document classification. Defaults to None 
     """
-    def __init__(self, path, partitions, tokenizer, batch_sizes=None, fix_length=512, lower=False):
-
-        super(RelationClassificationDatasetReader, self).__init__(
+    def __init__(self, path, partitions, tokenizer, batch_sizes=None, fix_length=512, lower=False, multi_label_map=None):
+        super(DocumentClassificationDatasetReader, self).__init__(
             path=path, partitions=partitions, tokenizer=tokenizer, format='JSON', skip_header=False,
             batch_sizes=batch_sizes, fix_length=fix_length, lower=lower,
             # Sort examples according to length of documents
-            sort_key=lambda x: len(x.text)
->>>>>>> 98288b8ca9edc00aa1ff2a156489a1f71ee5c50d
-        )
+            sort_key=lambda x: len(x.text))
+        self.multi_label_map = multi_label_map
+
 
     def textual_to_iterator(self):
         """Does whatever tokenization or processing is necessary to go from textual input to
@@ -154,7 +137,14 @@ class DocumentClassificationDatasetReader(DatasetReader):
             A tuple of `torchtext.data.iterator.BucketIterator` objects, one for each partition
             is `self.partitions`.
         """
-        fields = {'text': ('text', self.TEXT), 'label': ('label', self.LABEL)}
+        if multi_label_path: 
+            fields = {'TEXT': ('text', TEXT)}
+
+            for label in self.multi_label_map:
+                fields[label] = (label, self.LABEL)
+
+        else:  
+            fields = {'text': ('text', self.TEXT), 'label': ('label', self.LABEL)}
 
         splits, iterators = super().textual_to_iterator(fields)
 
@@ -212,15 +202,6 @@ class SequenceLabellingDatasetReader(DatasetReader):
             # Sort examples according to length of sentences
             sort_key=datasets.SequenceTaggingDataset.sort_key
         )
-<<<<<<< HEAD
-        LABELS = data.LabelField(use_vocab=False)
-
-        fields = {'TEXT': ('text', TEXT)}
-
-        # Add new entry in fields for every label in multi-label output
-        for label in self.label_vocab:
-            fields[label] = (f'label_{label}', LABELS)
-=======
 
     def textual_to_iterator(self):
         """Does whatever tokenization or processing is necessary to go from textual input to
@@ -231,7 +212,6 @@ class SequenceLabellingDatasetReader(DatasetReader):
             is `self.partitions`.
         """
         fields = [('text', self.TEXT), ('label', self.LABEL)]
->>>>>>> 98288b8ca9edc00aa1ff2a156489a1f71ee5c50d
 
         # Define the splits. Need path to directory (self.path), and then name of each file.
         splits = datasets.SequenceTaggingDataset.splits(
@@ -243,20 +223,11 @@ class SequenceLabellingDatasetReader(DatasetReader):
         # Define the iterator. Batch sizes are defined per partition.
         # BucketIterator groups sentences of similar length together to minimize padding. Use sort_key to sort examples by length and group similar sized entries into batches
         iterators = data.BucketIterator.splits(
-<<<<<<< HEAD
-            splits, sort_key=lambda x: len(x.text), batch_sizes=self.batch_sizes
-=======
-            splits, batch_sizes=self.batch_sizes, sort_key=self.sort_key
->>>>>>> 98288b8ca9edc00aa1ff2a156489a1f71ee5c50d
-        )
+            splits, batch_sizes=self.batch_sizes, sort_key=self.sort_key)
 
         # Finally, build the vocab. This "numericalizes" the field.
         # Assume the first split is 'train'.
-<<<<<<< HEAD
-        # LABEL.build_vocab(splits[0]) # easier to numericalize labels before calling torchtext pipeline
-=======
         self.LABEL.build_vocab(splits[0])
->>>>>>> 98288b8ca9edc00aa1ff2a156489a1f71ee5c50d
 
         return iterators
 
@@ -327,22 +298,6 @@ class RelationClassificationDatasetReader(DatasetReader):
 
 
 class NLIDatasetReader(DatasetReader):
-<<<<<<< HEAD
-    pass
-
-if __name__ == "__main__":
-   
-    # Params for Cohort Task
-    path = None
-    partitions = None
-    tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased', do_lower_case=True)
-    label_vocab = COHORT_DISEASE_CONSTANTS
-    batch_sizes = None
-
-    ICD_iters = DocumentClassificationDatasetReader(path, partitions, tokenizer, label_vocab, batch_sizes=batch_sizes, lower_case=True)
-
-    print(ICD_iters.text_to_iterator())
-=======
     """Reads instances from JSON lines file(s) were each line is in the following format:
 
     {"gold_label": ENTIALMENT LABEL, "sentence1": PREMISE TEXT, "sentence2": HYPOTHESIS TEXT}
@@ -410,4 +365,20 @@ if __name__ == "__main__":
         self.LABEL.build_vocab(splits[0])
 
         return iterators
->>>>>>> 98288b8ca9edc00aa1ff2a156489a1f71ee5c50d
+
+if __name__ == "__main__":
+   
+
+    from ..constants import COHORT_DISEASE_CONSTANTS
+    from transformers import AutoTokenizer
+    
+    # Params for Cohort Task
+    path = None
+    partitions = None
+    tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased', do_lower_case=True)
+    label_vocab = COHORT_DISEASE_CONSTANTS
+    batch_sizes = (1)
+
+    ICD_iters = DocumentClassificationDatasetReader(path, partitions, tokenizer, label_vocab, batch_sizes=batch_sizes, lower_case=True)
+
+    print(ICD_iters.text_to_iterator())
