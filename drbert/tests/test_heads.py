@@ -101,7 +101,7 @@ class TestSequenceLabellingHead(object):
 
         assert len(outputs) == 2
         assert outputs[0].size() == torch.Size([])  # Loss is a single element tensor
-        assert outputs[1].size() == (batch_size, num_labels)
+        assert outputs[1].size() == (batch_size, sequence_length, num_labels)
 
 
 class TestSequenceClassificationHead(object):
