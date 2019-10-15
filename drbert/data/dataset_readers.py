@@ -427,20 +427,3 @@ class NLIDatasetReader(DatasetReader):
         self.LABEL.build_vocab(*(split.label for split in splits))
 
         return iterators
-
-if __name__ == "__main__":
-   
-
-    from ..constants import COHORT_DISEASE_CONSTANTS
-    from transformers import AutoTokenizer
-    
-    # Params for Cohort Task
-    path = None
-    partitions = None
-    tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased', do_lower_case=True)
-    label_vocab = COHORT_DISEASE_CONSTANTS
-    batch_sizes = (1)
-
-    ICD_iters = DocumentClassificationDatasetReader(path, partitions, tokenizer, label_vocab, batch_sizes=batch_sizes, lower_case=True)
-
-    print(ICD_iters.text_to_iterator())
