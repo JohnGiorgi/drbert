@@ -17,8 +17,6 @@ class DatasetReader(object):
             False.
         batch_sizes (tuple): Optional, tuple of batch sizes to use for the different splits, or None
             to use the same batch_size for all splits. Defaults to None.
-        fix_length (int): Optional, a fixed length that all examples using this field will be padded
-            to, for flexible sequence lengths. Defaults to 512.
         lower: (bool): Optional, True if text should be lower cased, False if not. Defaults to
             False.
         sort_key (function): A key to use for sorting examples in order to batch together examples
@@ -30,7 +28,7 @@ class DatasetReader(object):
         ValueError: If batch_sizes is not None and `len(batch_sizes) != len(partitions)`.
     """
     def __init__(self, path, partitions, tokenizer, format, skip_header=False, batch_sizes=None,
-                 fix_length=512, lower=False, sort_key=None):
+                 lower=False, sort_key=None):
         if batch_sizes is not None:
             if not isinstance(batch_sizes, tuple):
                 raise ValueError(f"'batch_sizes' must be a tuple. Got: {batch_sizes}")
@@ -44,7 +42,6 @@ class DatasetReader(object):
         self.format = format
         self.skip_header = skip_header
         self.batch_sizes = batch_sizes
-        self.fix_length = fix_length
         self.lower = lower
         self.sort_key = sort_key
 
@@ -57,7 +54,6 @@ class DatasetReader(object):
             use_vocab=False,
             init_token=self.tokenizer.cls_token_id,
             eos_token=self.tokenizer.sep_token_id,
-            fix_length=self.fix_length,
             tokenize=self.tokenizer.encode,
             batch_first=True,
             pad_token=self.tokenizer.pad_token_id,
@@ -111,16 +107,14 @@ class DocumentClassificationDatasetReader(DatasetReader):
             sequential examples.
         batch_sizes (tuple): Optional, tuple of batch sizes to use for the different splits, or None
             to use the same batch_size for all splits. Defaults to None.
-        fix_length (int): Optional, a fixed length that all examples using this field will be padded
-            to, for flexible sequence lengths. Default: 512.
         lower: (bool): Optional, True if text should be lower cased, False if not. Defaults to
             False.
         multi_label_map (dict or list): dict or list containing all fields in the label space as per the jsonl file (for multi-label document classification only). If None, will assume single label document classification. Defaults to None 
     """
-    def __init__(self, path, partitions, tokenizer, batch_sizes=None, fix_length=512, lower=False, multi_label_map=None):
+    def __init__(self, path, partitions, tokenizer, batch_sizes=None, lower=False, multi_label_map=None):
         super(DocumentClassificationDatasetReader, self).__init__(
             path=path, partitions=partitions, tokenizer=tokenizer, format='JSON', skip_header=False,
-            batch_sizes=batch_sizes, fix_length=fix_length, lower=lower,
+            batch_sizes=batch_sizes, lower=lower,
             # Sort examples according to length of documents
             sort_key=lambda x: len(x.text))
         self.multi_label_map = multi_label_map
@@ -143,7 +137,7 @@ class DocumentClassificationDatasetReader(DatasetReader):
             for label in self.multi_label_map:
                 fields[label] = (label, self.LABEL)
 
-        else:  
+        else:
             fields = {'text': ('text', self.TEXT), 'label': ('label', self.LABEL)}
 
         splits, iterators = super().textual_to_iterator(fields)
@@ -190,15 +184,13 @@ class SequenceLabellingDatasetReader(DatasetReader):
             sequential examples.
         batch_sizes (tuple): Optional, tuple of batch sizes to use for the different splits, or None
             to use the same batch_size for all splits. Defaults to None.
-        fix_length (int): Optional, a fixed length that all examples using this field will be padded
-            to, for flexible sequence lengths. Default: 512.
         lower: (bool): Optional, True if text should be lower cased, False if not. Defaults to
             False.
     """
-    def __init__(self, path, partitions, tokenizer, batch_sizes=None, fix_length=512, lower=False):
+    def __init__(self, path, partitions, tokenizer, batch_sizes=None, lower=False):
         super(SequenceLabellingDatasetReader, self).__init__(
             path=path, partitions=partitions, tokenizer=tokenizer, format='TSV', skip_header=False,
-            batch_sizes=batch_sizes, fix_length=fix_length, lower=lower,
+            batch_sizes=batch_sizes, lower=lower,
             # Sort examples according to length of sentences
             sort_key=datasets.SequenceTaggingDataset.sort_key
         )
@@ -215,7 +207,6 @@ class SequenceLabellingDatasetReader(DatasetReader):
         self.LABEL = data.Field(
             init_token=self.tokenizer.cls_token_id,
             eos_token=self.tokenizer.sep_token_id,
-            fix_length=self.fix_length,
             batch_first=True,
             pad_token=self.tokenizer.pad_token_id,
         )
@@ -272,16 +263,14 @@ class RelationClassificationDatasetReader(DatasetReader):
             sequential examples.
         batch_sizes (tuple): Optional, tuple of batch sizes to use for the different splits, or None
             to use the same batch_size for all splits. Defaults to None.
-        fix_length (int): A fixed length that all examples using this field will be padded to, or
-            None for flexible sequence lengths. Default: None.
         lower: (bool): Optional, True if text should be lower cased, False if not. Defaults to
             False.
     """
-    def __init__(self, path, partitions, tokenizer, batch_sizes=None, fix_length=512, lower=False):
+    def __init__(self, path, partitions, tokenizer, batch_sizes=None, lower=False):
 
         super(RelationClassificationDatasetReader, self).__init__(
             path=path, partitions=partitions, tokenizer=tokenizer, format='TSV', skip_header=True,
-            batch_sizes=batch_sizes, fix_length=fix_length, lower=lower,
+            batch_sizes=batch_sizes, lower=lower,
             # Sort examples according to length of sentences
             sort_key=lambda x: len(x.text)
         )
@@ -329,15 +318,13 @@ class DocumentClassificationDatasetReader(DatasetReader):
             sequential examples.
         batch_sizes (tuple): Optional, tuple of batch sizes to use for the different splits, or None
             to use the same batch_size for all splits. Defaults to None.
-        fix_length (int): Optional, a fixed length that all examples using this field will be padded
-            to, for flexible sequence lengths. Default: 512.
         lower: (bool): Optional, True if text should be lower cased, False if not. Defaults to
             False.
     """
-    def __init__(self, path, partitions, tokenizer, batch_sizes=None, fix_length=512, lower=False):
+    def __init__(self, path, partitions, tokenizer, batch_sizes=None, lower=False):
         super(RelationClassificationDatasetReader, self).__init__(
             path=path, partitions=partitions, tokenizer=tokenizer, format='JSON', skip_header=False,
-            batch_sizes=batch_sizes, fix_length=fix_length, lower=lower,
+            batch_sizes=batch_sizes, lower=lower,
             # Sort examples according to length of documents
             sort_key=lambda x: len(x.text)
         )
@@ -391,15 +378,13 @@ class NLIDatasetReader(DatasetReader):
             sequential examples.
         batch_sizes (tuple): Optional, tuple of batch sizes to use for the different splits, or None
             to use the same batch_size for all splits. Defaults to None.
-        fix_length (int): A fixed length that all examples using this field will be padded to, or
-            None for flexible sequence lengths. Default: None.
         lower: (bool): Optional, True if text should be lower cased, False if not. Defaults to
             False.
     """
-    def __init__(self, path, partitions, tokenizer, batch_sizes=None, fix_length=512, lower=False):
+    def __init__(self, path, partitions, tokenizer, batch_sizes=None, lower=False):
         super(NLIDatasetReader, self).__init__(
             path=path, partitions=partitions, tokenizer=tokenizer, format='JSON', skip_header=False,
-            batch_sizes=batch_sizes, fix_length=fix_length, lower=lower,
+            batch_sizes=batch_sizes, lower=lower,
             # Sort examples according to length of premise and hypothesis
             sort_key=lambda x: data.interleave_keys(len(x.premise), len(x.hypothesis))
         )
@@ -413,7 +398,9 @@ class NLIDatasetReader(DatasetReader):
             is `self.partitions`.
         """
         # Premise and hypothesis will be paired, so fix_length is set to 256
-        self.TEXT.fix_length = self.fix_length // 2
+        # TODO (John): There has to be a better way of doing this? It will prevent BucketIterator
+        # from grouping.
+        self.TEXT.fix_length = 256
 
         fields = {
             'sentence1':  ('premise', self.TEXT),
