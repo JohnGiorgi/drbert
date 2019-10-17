@@ -1,3 +1,6 @@
+import os
+import json
+
 from torchtext import data
 from torchtext import datasets
 
@@ -12,7 +15,7 @@ class DatasetReader(object):
             containing the suffix to add to `path` for that partition.
         tokenizer (transformers.PreTrainedTokenizer): The function used to tokenize strings into
             sequential examples.
-        format (str): The format of the data file. One of “CSV”, “TSV”, or “JSON” (case-insensitive).
+        format (str): Format of the data file. One of “CSV”, “TSV”, or “JSON” (case-insensitive).
         skip_header (bool) : Optional, whether to skip the first line of the input file. Defaults to
             False.
         batch_sizes (tuple): Optional, tuple of batch sizes to use for the different splits, or None
@@ -80,75 +83,6 @@ class DatasetReader(object):
         return splits, iterators
 
 
-class DocumentClassificationDatasetReader(DatasetReader):
-    """Reads instances from JSON lines file(s) were each line is in the following format:
-
-    {"TEXT": DOCUMENT TEXT, "LABEL": label (if single label task) OR "LABEL_1": label_1, "LABEL_2: label_2, ..., "LABEL_N": label_n (if n-labeled multi-label task)
-
-    Example usage:
-        >>> from transformers import AutoTokenizer
-        >>> from dataset_readers import DocumentClassificationDatasetReader
-        >>> partitions={
-                'train': 'train_filename.jsonl',
-                'validation': 'valid_filename.jsonl',
-                'test': 'test_filename.jsonl',
-            }
-        >>> tokenizer = AutoTokenizer.from_pretrained('bert-base-cased')
-        >>> train_iter, valid_iter, test_iter = DocumentClassificationDatasetReader(
-                path='path/to/nli/dataset', partitions=partitions, tokenizer=tokenizer,
-                batch_sizes=(16, 256, 256)
-            ).textual_to_iterator()
-
-    Args:
-        path (str): Common prefix of the splits’ file paths.
-        partitions (dict): A dictionary keyed by partition ('train', 'test', 'validation')
-            containing the suffix to add to `path` for that partition.
-        tokenizer (transformers.PreTrainedTokenizer): The function used to tokenize strings into
-            sequential examples.
-        batch_sizes (tuple): Optional, tuple of batch sizes to use for the different splits, or None
-            to use the same batch_size for all splits. Defaults to None.
-        lower: (bool): Optional, True if text should be lower cased, False if not. Defaults to
-            False.
-        multi_label_map (dict or list): dict or list containing all fields in the label space as per the jsonl file (for multi-label document classification only). If None, will assume single label document classification. Defaults to None 
-    """
-    def __init__(self, path, partitions, tokenizer, batch_sizes=None, lower=False, multi_label_map=None):
-        super(DocumentClassificationDatasetReader, self).__init__(
-            path=path, partitions=partitions, tokenizer=tokenizer, format='JSON', skip_header=False,
-            batch_sizes=batch_sizes, lower=lower,
-            # Sort examples according to length of documents
-            sort_key=lambda x: len(x.text))
-        self.multi_label_map = multi_label_map
-
-
-    def textual_to_iterator(self):
-        """Does whatever tokenization or processing is necessary to go from textual input to
-        iterators for training and evaluation for a document classification dataset. Assumes multi-label multi-class framing.
-        
-        Args:
-            path: path to data splits. Assume labels are numericalized. Can also tokenize text. In that case call the AutoTokenizer's `convert_tokens_to_ids` method in a torchtext Pipeline and add to TEXT field below
-        
-        Returns:
-            A tuple of `torchtext.data.iterator.BucketIterator` objects, one for each partition
-            is `self.partitions`.
-        """
-        if multi_label_path: 
-            fields = {'TEXT': ('text', TEXT)}
-
-            for label in self.multi_label_map:
-                fields[label] = (label, self.LABEL)
-
-        else:
-            fields = {'text': ('text', self.TEXT), 'label': ('label', self.LABEL)}
-
-        splits, iterators = super().textual_to_iterator(fields)
-
-        # Finally, build the vocab. This "numericalizes" the field.
-        # Assume the first split is 'train'.
-        self.LABEL.build_vocab(splits[0])
-
-        return iterators
-
-
 class SequenceLabellingDatasetReader(DatasetReader):
     """Reads instances from a 2 columned TSV file(s) where each line is in the following format:
 
@@ -172,7 +106,7 @@ class SequenceLabellingDatasetReader(DatasetReader):
             }
         >>> tokenizer = AutoTokenizer.from_pretrained('bert-base-cased')
         >>> train_iter, valid_iter, test_iter = SequenceLabellingDatasetReader(
-                path='path/to/nli/dataset', partitions=partitions, tokenizer=tokenizer,
+                path='path/to/dataset', partitions=partitions, tokenizer=tokenizer,
                 batch_sizes=(16, 256, 256)
             ).textual_to_iterator()
 
@@ -221,7 +155,8 @@ class SequenceLabellingDatasetReader(DatasetReader):
         )
 
         # Define the iterator. Batch sizes are defined per partition.
-        # BucketIterator groups sentences of similar length together to minimize padding. Use sort_key to sort examples by length and group similar sized entries into batches
+        # BucketIterator groups sentences of similar length together to minimize padding.
+        # Use sort_key to sort examples by length and group similar sized entries into batches
         iterators = data.BucketIterator.splits(
             splits, batch_sizes=self.batch_sizes, sort_key=self.sort_key)
 
@@ -251,7 +186,7 @@ class RelationClassificationDatasetReader(DatasetReader):
             }
         >>> tokenizer = AutoTokenizer.from_pretrained('bert-base-cased')
         >>> train_iter, valid_iter, test_iter = RelationClassificationDatasetReader(
-                path='path/to/nli/dataset', partitions=partitions, tokenizer=tokenizer,
+                path='path/to/dataset', partitions=partitions, tokenizer=tokenizer,
                 batch_sizes=(16, 256, 256)
             ).textual_to_iterator()
 
@@ -285,7 +220,8 @@ class RelationClassificationDatasetReader(DatasetReader):
         """
         fields = [('index', None), ('text', self.TEXT), ('label', self.LABEL)]
 
-        splits, iterators = super(RelationClassificationDatasetReader, self).textual_to_iterator(fields)
+        splits, iterators = \
+            super(RelationClassificationDatasetReader, self).textual_to_iterator(fields)
 
         # Finally, build the vocab. This "numericalizes" the field.
         self.LABEL.build_vocab(*(split.label for split in splits))
@@ -294,7 +230,22 @@ class RelationClassificationDatasetReader(DatasetReader):
 
 
 class DocumentClassificationDatasetReader(DatasetReader):
-    """TODO
+    """Reads instances from JSON lines file(s) were each line is in the following format:
+
+    For multi-class datasets:
+
+        {"text": DOCUMENT TEXT, "label": LABEL}
+
+    For multi-label datasets
+
+        {"text": DOCUMENT TEXT, "label_1": LABEL_2: "label_2": LABEL_2, ..., "label_n": LABEL_N}
+
+    where any field in the JSON that is not in ["text", "id"] will be considered a label field. This
+    allows for loading for multi-label datasets.
+
+    E.g.,
+
+    {"text": "The patient is a 58 year old...", label": "PAST SMOKER", "id": "660"}
 
     Example usage:
         >>> from transformers import AutoTokenizer
@@ -306,7 +257,7 @@ class DocumentClassificationDatasetReader(DatasetReader):
             }
         >>> tokenizer = AutoTokenizer.from_pretrained('bert-base-cased')
         >>> train_iter, valid_iter, test_iter = DocumentClassificationDatasetReader(
-                path='path/to/nli/dataset', partitions=partitions, tokenizer=tokenizer,
+                path='path/to/dataset', partitions=partitions, tokenizer=tokenizer,
                 batch_sizes=(16, 256, 256)
             ).textual_to_iterator()
 
@@ -320,14 +271,16 @@ class DocumentClassificationDatasetReader(DatasetReader):
             to use the same batch_size for all splits. Defaults to None.
         lower: (bool): Optional, True if text should be lower cased, False if not. Defaults to
             False.
+        label_fields (list): Optional, a list containing the keys to all label fields in the JSON
+            lines file(s). If None, assume a multi-class dataset with a single label field
+            ("label"). Defaults to None.
     """
     def __init__(self, path, partitions, tokenizer, batch_sizes=None, lower=False):
-        super(RelationClassificationDatasetReader, self).__init__(
+        super(DocumentClassificationDatasetReader, self).__init__(
             path=path, partitions=partitions, tokenizer=tokenizer, format='JSON', skip_header=False,
             batch_sizes=batch_sizes, lower=lower,
             # Sort examples according to length of documents
-            sort_key=lambda x: len(x.text)
-        )
+            sort_key=lambda x: len(x.text))
 
     def textual_to_iterator(self):
         """Does whatever tokenization or processing is necessary to go from textual input to
@@ -337,7 +290,7 @@ class DocumentClassificationDatasetReader(DatasetReader):
             A tuple of `torchtext.data.iterator.BucketIterator` objects, one for each partition
             is `self.partitions`.
         """
-        fields = {'text': ('text', self.TEXT), 'label': ('label', self.LABEL)}
+        fields = self.get_fields()
 
         splits, iterators = super().textual_to_iterator(fields)
 
@@ -345,6 +298,36 @@ class DocumentClassificationDatasetReader(DatasetReader):
         self.LABEL.build_vocab(*(split.label for split in splits))
 
         return iterators
+
+    def get_fields(self):
+        """Returns a dictionary of tuples containing torchtext fields.
+
+        If "label" is in the JSON line file(s) at `self.path`, this is considered to be a
+        single-label dataset. The returned dictionary will contain two torchtext fields at keys
+        "text" and "label"
+
+        Otherwise, this is considered to be a multi-label dataset. The returned dictionary will
+        contain a torchtext field at key "text", as well as a field for every key in the JSON
+        lines(s) not in ["text", "id"].
+        """
+        # These fields will NOT be considered label fields
+        blacklist = {'text', 'id'}
+        # Assume 'text' field is present
+        fields = {'text': ('text', self.TEXT)}
+
+        # Add label fields based on JSON lines file
+        filepath = os.path.join(self.path, list(self.partitions.values())[0])
+        with open(filepath, 'r') as f:
+            jsonl_keys = [key for key in json.loads(f.readline()).keys() if key not in blacklist]
+            # Multi-class datasets
+            if 'label' in jsonl_keys:
+                fields['label'] = ('label', self.LABEL)
+            # Multi-label datasets
+            else:
+                for key in jsonl_keys:
+                    fields[key] = (key, self.label)
+
+        return fields
 
 
 class NLIDatasetReader(DatasetReader):
@@ -366,7 +349,7 @@ class NLIDatasetReader(DatasetReader):
             }
         >>> tokenizer = AutoTokenizer.from_pretrained('bert-base-cased')
         >>> train_iter, valid_iter, test_iter = NLIDatasetReader(
-                path='path/to/nli/dataset', partitions=partitions, tokenizer=tokenizer,
+                path='path/to/dataset', partitions=partitions, tokenizer=tokenizer,
                 batch_sizes=(16, 256, 256)
             ).textual_to_iterator()
 
@@ -397,10 +380,8 @@ class NLIDatasetReader(DatasetReader):
             A tuple of `torchtext.data.iterator.BucketIterator` objects, one for each partition
             is `self.partitions`.
         """
-        # Premise and hypothesis will be paired, so fix_length is set to 256
-        # TODO (John): There has to be a better way of doing this? It will prevent BucketIterator
-        # from grouping.
-        self.TEXT.fix_length = 256
+        # Premise and hypothesis will be paired, so max_len is set to 256
+        self.tokenizer.max_len = 256
 
         fields = {
             'sentence1':  ('premise', self.TEXT),
