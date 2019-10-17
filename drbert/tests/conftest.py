@@ -5,6 +5,7 @@ from transformers import BertModel
 from transformers import BertTokenizer
 
 from ..data.dataset_readers import DatasetReader
+from ..data.dataset_readers import DocumentClassificationDatasetReader
 from ..data.dataset_readers import NLIDatasetReader
 from ..data.dataset_readers import RelationClassificationDatasetReader
 from ..data.dataset_readers import SequenceLabellingDatasetReader
@@ -92,7 +93,6 @@ def dataset_reader(bert_tokenizer):
         'format':        'tsv',
         'skip_header':   False,
         'batch_sizes':   (16,),
-        'fix_length':    512,
         'lower':         False,
     }
 
@@ -112,7 +112,6 @@ def sequence_labelling_dataset_reader(bert_tokenizer):
                           'test':       'test.tsv'},
         'tokenizer':     bert_tokenizer,
         'batch_sizes':   (16, 256, 256),
-        'fix_length':    512,
         'lower':         False,
     }
 
@@ -132,11 +131,28 @@ def relation_classification_dataset_reader(bert_tokenizer):
                           'test':       'test.tsv'},
         'tokenizer':     bert_tokenizer,
         'batch_sizes':   (16, 256, 256),
-        'fix_length':    512,
         'lower':         False,
     }
 
     dataset_reader = RelationClassificationDatasetReader(**args)
+
+    return args, dataset_reader
+
+
+@pytest.fixture
+def document_classification_dataset_reader(bert_tokenizer):
+    """Initialized DocumentClassificationDatasetReader.
+    """
+    args = {
+        'path':          resource_filename(__name__, 'resources/n2c2_2006_smoking'),
+        'partitions':    {'train': 'smokers_surrogate_train_all_version2.jsonl',
+                          'test':  'smokers_surrogate_test_all_groundtruth_version2.jsonl'},
+        'tokenizer':     bert_tokenizer,
+        'batch_sizes':   (16, 256),
+        'lower':         False,
+    }
+
+    dataset_reader = DocumentClassificationDatasetReader(**args)
 
     return args, dataset_reader
 
@@ -152,7 +168,6 @@ def nli_dataset_reader(bert_tokenizer):
                           'test':       'snli_1.0_test.jsonl'},
         'tokenizer':     bert_tokenizer,
         'batch_sizes':   (16, 256, 256),
-        'fix_length':    512,
         'lower':         False,
     }
 

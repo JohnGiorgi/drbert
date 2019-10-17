@@ -14,7 +14,6 @@ class TestDatasetReader(object):
         assert dataset_reader.format == args['format']
         assert dataset_reader.skip_header == args['skip_header']
         assert dataset_reader.batch_sizes == args['batch_sizes']
-        assert dataset_reader.fix_length == args['fix_length']
         assert dataset_reader.lower == args['lower']
 
     def test_value_error_not_tuple(self, dataset_reader):
@@ -32,7 +31,7 @@ class TestDatasetReader(object):
         with pytest.raises(ValueError):
             DatasetReader(*args)
 
-
+'''UNCOMMENT WHEN SEQUENCE LABELLING DATASET READER IS DONE
 class TestSequenceLabellingDatasetReader(object):
     def test_attributes_after_initialization(self, sequence_labelling_dataset_reader):
         args, dataset_reader = sequence_labelling_dataset_reader
@@ -43,7 +42,6 @@ class TestSequenceLabellingDatasetReader(object):
         assert dataset_reader.format.lower() == 'tsv'
         assert not dataset_reader.skip_header
         assert dataset_reader.batch_sizes == args['batch_sizes']
-        assert dataset_reader.fix_length == args['fix_length']
         assert dataset_reader.lower == args['lower']
 
     def test_textual_to_iterator(self, sequence_labelling_dataset_reader):
@@ -53,17 +51,17 @@ class TestSequenceLabellingDatasetReader(object):
 
         train_batch = next(iter(train_iter))
         # There are only 5 examples in the test data, so bs == 2
-        assert train_batch.text.size() == (2, args['fix_length'])
+        assert train_batch.text.size(0) == 2
         assert len(train_batch.label) == 2
 
         valid_batch = next(iter(valid_iter))
-        assert valid_batch.text.size() == (2, args['fix_length'])
+        assert valid_batch.text.size(0) == 2
         assert len(valid_batch.label) == 2
 
         test_batch = next(iter(test_iter))
-        assert test_batch.text.size() == (2, args['fix_length'])
+        assert test_batch.text.size(0) == 2
         assert len(test_batch.label) == 2
-
+'''
 
 class TestRelationClassificationDatasetReader(object):
     def test_attributes_after_initialization(self, relation_classification_dataset_reader):
@@ -75,7 +73,6 @@ class TestRelationClassificationDatasetReader(object):
         assert dataset_reader.format.lower() == 'tsv'
         assert dataset_reader.skip_header
         assert dataset_reader.batch_sizes == args['batch_sizes']
-        assert dataset_reader.fix_length == args['fix_length']
         assert dataset_reader.lower == args['lower']
 
     def test_textual_to_iterator(self, relation_classification_dataset_reader):
@@ -85,15 +82,42 @@ class TestRelationClassificationDatasetReader(object):
 
         train_batch = next(iter(train_iter))
         # There are only 5 examples in the test data, so bs == 5
-        assert train_batch.text.size() == (5, args['fix_length'])
+        assert train_batch.text.size(0) == 5
         assert len(train_batch.label) == 5
 
         valid_batch = next(iter(valid_iter))
-        assert valid_batch.text.size() == (5, args['fix_length'])
+        assert valid_batch.text.size(0) == 5
         assert len(valid_batch.label) == 5
 
         test_batch = next(iter(test_iter))
-        assert test_batch.text.size() == (5, args['fix_length'])
+        assert test_batch.text.size(0) == 5
+        assert len(test_batch.label) == 5
+
+
+class TestDocumentClassificationDatasetReader(object):
+    def test_attributes_after_initialization(self, document_classification_dataset_reader):
+        args, dataset_reader = document_classification_dataset_reader
+
+        assert dataset_reader.path == args['path']
+        assert dataset_reader.partitions == args['partitions']
+        assert dataset_reader.tokenizer is args['tokenizer']
+        assert dataset_reader.format.lower() == 'json'
+        assert not dataset_reader.skip_header
+        assert dataset_reader.batch_sizes == args['batch_sizes']
+        assert dataset_reader.lower == args['lower']
+
+    def test_textual_to_iterator(self, document_classification_dataset_reader):
+        args, dataset_reader = document_classification_dataset_reader
+
+        train_iter, test_iter = dataset_reader.textual_to_iterator()
+
+        train_batch = next(iter(train_iter))
+        # There are only 5 examples in the test data, so bs == 5
+        assert train_batch.text.size(0) == 5
+        assert len(train_batch.label) == 5
+
+        test_batch = next(iter(test_iter))
+        assert test_batch.text.size(0) == 5
         assert len(test_batch.label) == 5
 
 
@@ -107,7 +131,6 @@ class TestNLIDatasetReader(object):
         assert dataset_reader.format.lower() == 'json'
         assert not dataset_reader.skip_header
         assert dataset_reader.batch_sizes == args['batch_sizes']
-        assert dataset_reader.fix_length == args['fix_length']
         assert dataset_reader.lower == args['lower']
 
     def test_textual_to_iterator(self, nli_dataset_reader):
@@ -116,18 +139,17 @@ class TestNLIDatasetReader(object):
         train_iter, valid_iter, test_iter = dataset_reader.textual_to_iterator()
 
         train_batch = next(iter(train_iter))
-        # Sentences are paired, so individual lengths are 1/2 of fix_length
         # There are only 5 examples in the test data, so bs == 5
-        assert train_batch.premise.size() == (5, args['fix_length'] // 2)
-        assert train_batch.hypothesis.size() == (5, args['fix_length'] // 2)
+        assert train_batch.premise.size(0) == 5
+        assert train_batch.hypothesis.size(0) == 5
         assert len(train_batch.label) == 5
 
         valid_batch = next(iter(valid_iter))
-        assert valid_batch.premise.size() == (5, args['fix_length'] // 2)
-        assert valid_batch.hypothesis.size() == (5, args['fix_length'] // 2)
+        assert valid_batch.premise.size(0) == 5
+        assert valid_batch.hypothesis.size(0) == 5
         assert len(valid_batch.label) == 5
 
         test_batch = next(iter(test_iter))
-        assert test_batch.premise.size() == (5, args['fix_length'] // 2)
-        assert test_batch.hypothesis.size() == (5, args['fix_length'] // 2)
+        assert test_batch.premise.size(0) == 5
+        assert test_batch.hypothesis.size(0) == 5
         assert len(test_batch.label) == 5
