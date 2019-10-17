@@ -68,6 +68,7 @@ def prepare_optimizer_and_scheduler(args, model, t_total):
     decay_blacklist = {'LayerNorm.bias', 'LayerNorm.weight'}
 
     decay, no_decay = [], []
+    for name, param in model.named_parameters():
         # Frozen weights
         if not param.requires_grad:
             continue
