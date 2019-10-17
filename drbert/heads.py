@@ -209,3 +209,108 @@ class DocumentClassificationHead(torch.nn.Module):
             outputs = (loss,) + outputs
 
         return outputs  # (loss), scores, (hidden_states), (attentions)
+
+class LongDocumentClassificationHead(torch.nn.Module):
+    """A head which can be placed at the output of a language model (such as BERT) to perform
+    document classification tasks on documents longer than 512 tokens.
+
+    Args:
+        config (BertConfig): `BertConfig` class instance with a configuration to build a new model.
+
+    Outputs: `Tuple` comprising various elements depending on the configuration (config) and inputs:
+        - loss: (optional, returned when `labels` is provided) `torch.FloatTensor` of shape `(1,)`:
+            Classification loss.
+        - scores: `torch.FloatTensor` of shape `(batch_size, sequence_length, config.num_labels)`
+            Classification scores (before SoftMax).
+        - hidden_states: (`optional`, returned when `config.output_hidden_states=True`)
+            list of `torch.FloatTensor` (one for the output of each layer + the output of the
+            embeddings) of shape `(batch_size, sequence_length, hidden_size)`: Hidden-states of the
+            model at the output of each layer plus the initial embedding outputs.
+        - attentions: (`optional`, returned when `config.output_attentions=True`)
+            list of `torch.FloatTensor` (one for each layer) of shape `(batch_size, num_heads,
+            sequence_length, sequence_length)`: Attentions weights after the attention softmax, used
+            to compute the weighted average in the self-attention heads.
+
+    Examples:
+        >>> tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased')
+        >>> config = AutoConfig.from_pretrained('bert-base-uncased')
+        >>> bert = AutoModel.from_pretrained('bert-base-uncased')
+        >>> head = DocumentClassificationHead(config)
+        >>> input_ids = tokenizer.encode("Hello, my dog is cute", add_special_tokens=True)
+        >>> input_ids = torch.tensor(input_ids).unsqueeze(0)  # Batch size 1
+        >>> labels = torch.ones(0, 4, (16, 4))  # E.g. 16 diseases, with 4 classes each.
+        >>> outputs = head(bert, input_ids, labels=labels)
+        >>> loss, logits = outputs[:2]
+    """
+    def __init__(self, config, activation = "ReLU"):
+        super(DocumentClassificationHead, self).__init__()
+        # TODO (John): This will eventually be decoupled from the cohort task
+        # For non-multi label datasets, num_classes will be 1
+        self.num_labels = config.num_icd_labels
+
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+
+        self.classifier = nn.Sequential(
+            nn.Linear(config.hidden_size, config.icd_ffnn_size),
+            self.ReLU(),
+            nn.Dropout(config.hidden_dropout_prob),
+            nn.Linear(config.icd_ffnn_size, config.icd_ffnn_size // 2),
+            self.ReLU(),
+            nn.Dropout(config.hidden_dropout_prob),
+            nn.Linear(config.icd_ffnn_size // 2, self.num_labels[0] * self.num_labels[1])
+        )
+
+
+        # TODO: CODE REVIEW for Michal
+        ## LSTM Layer
+        self.lstm = LSTM(config.hidden_size,config.hidden_size)
+        ## Updated Classifier layer
+        self.classifier = nn.Sequential(
+            nn.Dropout(config.hidden_dropout_prob),
+            nn.Linear(config.icd_ffnn_size, config.num_labels),
+            self.ReLU()
+        )
+
+    def forward(self, document_batch, document_sequence_lengths, bert, input_ids,
+     attention_mask=None, token_type_ids=None, position_ids=None,
+     head_mask=None, labels=None, freeze_bert=False):
+     # Changes : config.batch_size = batch size for bert (originally self.bert_batch_size)
+     # input_ids unused.
+     # bert used instead of passing on the self.bert part
+     # token_type_ids and attention_mask moved to config
+     # Removed the device used = cuda
+     # The min(document_batch.shape[1],config.batch_size) part should probably be edited to allow for
+     # not cutting off stuff.
+     #
+        #bert should output a (batch_size, num_sequences, bert_hidden_size)
+        bert_output = torch.zeros(size=(document_batch.shape[0],
+                                              min(document_batch.shape[1],config.batch_size),
+                                              config.hidden_size), dtype=torch.float)
+        use_grad = not freeze_bert
+        with torch.set_grad_enabled(False):
+            for doc_id in range(document_batch.shape[0]):
+                bert_output[doc_id][:config.batch_size] = self.dropout(bert(document_batch[doc_id][:config.batch_size,0], #I am pretty sure these are the new input ids
+                                                token_type_ids=document_batch[doc_id][:config.batch_size,1],
+                                                attention_mask=document_batch[doc_id][:config.batch_size,2])[1],
+                                                position_ids=position_ids,
+                                                head_mask=head_mask,
+                                                )
+
+        output, (_, _) = self.lstm(bert_output.permute(1,0,2))
+
+        last_layer = output[-1]
+        #print("Last LSTM layer shape:",last_layer.shape)
+
+        # Changed Prediction to logits
+        logits = self.classifier(last_layer)
+
+        assert prediction.shape[0] == document_batch.shape[0]
+
+        logits = logits.view(self.num_labels)
+        output = (logits,) + output[2:] # This should add hidden states and attention if they are there.
+        if labels is not None:
+            loss_fct = CrossEntropyLoss()
+            loss = loss_fct(logits.view(*self.num_labels), labels.view(-1))
+            output = (loss,) + output
+
+        return outputs # (Loss), Scores, (hidden_states), (attentions)
