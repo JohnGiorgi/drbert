@@ -4,8 +4,9 @@ CLS = '[CLS]'
 UNK = '[UNK]'
 PAD = '[PAD]'
 WORDPIECE = 'X'
-PHI = 'PHI'
 BERT_MAX_SENT_LEN = 512
+
+TASKS = {'sequence_labelling', 'sequence_classification', 'document_classification'}
 
 DEID_TYPES = [
     PAD,
