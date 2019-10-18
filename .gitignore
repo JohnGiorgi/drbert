@@ -3,9 +3,6 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# NeurIPS 2019
-data/
-
 # C extensions
 *.so
 

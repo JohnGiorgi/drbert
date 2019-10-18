@@ -1,0 +1,6 @@
+index	sentence	label
+16357751.T1.T2	Recent studies have provided consistent evidence that treatment with abatacept results in a rapid onset of efficacy that is maintained over the course of treatment in patients with inadequate response to @CHEMICAL$ and anti-@GENE$ therapies.	false
+14967461.T1.T22	@CHEMICAL$ inhibitors currently under investigation include the small molecules @GENE$ (Iressa, ZD1839) and erlotinib (Tarceva, OSI-774), as well as monoclonal antibodies such as cetuximab (IMC-225, Erbitux).	CPR:4
+14967461.T2.T22	@CHEMICAL$ inhibitors currently under investigation include the small molecules gefitinib (@GENE$, ZD1839) and erlotinib (Tarceva, OSI-774), as well as monoclonal antibodies such as cetuximab (IMC-225, Erbitux).	CPR:4
+14967461.T3.T22	@CHEMICAL$ inhibitors currently under investigation include the small molecules gefitinib (Iressa, @GENE$) and erlotinib (Tarceva, OSI-774), as well as monoclonal antibodies such as cetuximab (IMC-225, Erbitux).	CPR:4
+14967461.T4.T22	@CHEMICAL$ inhibitors currently under investigation include the small molecules gefitinib (Iressa, ZD1839) and @GENE$ (Tarceva, OSI-774), as well as monoclonal antibodies such as cetuximab (IMC-225, Erbitux).	CPR:4

@@ -1,4 +1,6 @@
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
 
 import argparse
 import glob
@@ -9,21 +11,30 @@ from itertools import zip_longest
 
 import numpy as np
 import torch
-from transformers import (AdamW, AutoConfig, AutoTokenizer,
-                                  WarmupLinearSchedule)
-from transformers.modeling_utils import WEIGHTS_NAME
 from sklearn.metrics import precision_recall_fscore_support
-from tensorboardX import SummaryWriter
-from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
+from torch.utils.tensorboard import SummaryWriter
+from torch.utils.data import DataLoader
+from torch.utils.data import RandomSampler
+from torch.utils.data import SequentialSampler
 from torch.utils.data.distributed import DistributedSampler
-from tqdm import tqdm, trange
+from tqdm import tqdm
+from tqdm import trange
+from transformers import AdamW
+from transformers import AutoConfig
+from transformers import AutoTokenizer
+from transformers import WarmupLinearSchedule
+from transformers.modeling_utils import WEIGHTS_NAME
 
-from .constants import (COHORT_DISEASE_CONSTANTS, COHORT_DISEASE_LIST,
-                        COHORT_INTUITIVE_LABEL_CONSTANTS,
-                        COHORT_TEXTUAL_LABEL_CONSTANTS, DEID_LABELS, OUTSIDE,
-                        PHI)
+from .constants import COHORT_DISEASE_CONSTANTS
+from .constants import COHORT_DISEASE_LIST
+from .constants import COHORT_INTUITIVE_LABEL_CONSTANTS
+from .constants import COHORT_TEXTUAL_LABEL_CONSTANTS
+from .constants import DEID_LABELS
+from .constants import OUTSIDE
+from .constants import PHI
 from .model import DrBERT
-from .utils import data_utils, eval_utils
+from .utils import data_utils
+from .utils import eval_utils
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +68,6 @@ def prepare_optimizer_and_scheduler(args, model, t_total):
     decay_blacklist = {'LayerNorm.bias', 'LayerNorm.weight'}
 
     decay, no_decay = [], []
-
     for name, param in model.named_parameters():
         # Frozen weights
         if not param.requires_grad:
@@ -73,13 +83,17 @@ def prepare_optimizer_and_scheduler(args, model, t_total):
         {'params': decay, 'weight_decay': args.weight_decay}
     ]
 
-    optimizer = AdamW(grouped_parameters,
-                      lr=args.learning_rate,
-                      eps=args.adam_epsilon,
-                      correct_bias=False)
-    scheduler = WarmupLinearSchedule(optimizer,
-                                     warmup_steps=args.warmup * t_total,
-                                     t_total=t_total)
+    optimizer = AdamW(
+        grouped_parameters,
+        lr=args.learning_rate,
+        eps=args.adam_epsilon,
+        correct_bias=False
+    )
+    scheduler = WarmupLinearSchedule(
+        optimizer,
+        warmup_steps=args.warmup * t_total,
+        t_total=t_total
+    )
 
     return optimizer, scheduler
 
@@ -139,7 +153,7 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
                                                           output_device=args.local_rank,
                                                           find_unused_parameters=True)
 
-    # Train!
+    # Train
     logger.info("***** Running training *****")
     logger.info("  Num examples = %d", len(deid_dataloader) + len(cohort_dataloader))
     logger.info("  Num Epochs = %d", args.num_train_epochs)

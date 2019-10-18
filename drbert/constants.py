@@ -7,6 +7,8 @@ WORDPIECE = 'X'
 PHI = 'PHI'
 BERT_MAX_SENT_LEN = 512
 
+COHORT_DATA_DIR = None
+
 DEID_TYPES = [
     PAD,
     'E-AGE',
