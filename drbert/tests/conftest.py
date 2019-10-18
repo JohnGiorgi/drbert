@@ -107,9 +107,10 @@ def sequence_labelling_dataset_reader(bert_tokenizer):
     """
     args = {
         'path':          resource_filename(__name__, 'resources/BC5CDR'),
-        'partitions':    {'train':      'train.tsv',
-                          'validation': 'devel.tsv',
-                          'test':       'test.tsv'},
+        # TODO (John): Change these back to original data once we figure out the wordpiece problem
+        'partitions':    {'train':      'train_wordpiece.tsv',
+                          'validation': 'devel_wordpiece.tsv',
+                          'test':       'test_wordpiece.tsv'},
         'tokenizer':     bert_tokenizer,
         'batch_sizes':   (16, 256, 256),
         'lower':         False,

@@ -1,0 +1,36 @@
+Na	B	1
+##lo	X	0
+##xon	X	0
+##e	X	0
+reverse	O	1
+##s	X	0
+the	O	1
+anti	O	1
+##hy	X	0
+##pert	X	0
+##ens	X	0
+##ive	X	0
+effect	O	1
+of	O	1
+c	B	1
+##lon	X	0
+##id	X	0
+##ine	X	0
+.	O	1
+
+Na	B	1
+##lo	X	0
+##xon	X	0
+##e	X	0
+alone	O	1
+did	O	1
+not	O	1
+affect	O	1
+either	O	1
+blood	O	1
+pressure	O	1
+or	O	1
+heart	O	1
+rate	O	1
+.	O	1
+

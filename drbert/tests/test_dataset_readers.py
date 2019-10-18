@@ -1,4 +1,5 @@
 import pytest
+from torchtext import datasets
 from ..data.dataset_readers import DatasetReader
 
 
@@ -31,7 +32,7 @@ class TestDatasetReader(object):
         with pytest.raises(ValueError):
             DatasetReader(*args)
 
-'''UNCOMMENT WHEN SEQUENCE LABELLING DATASET READER IS DONE
+
 class TestSequenceLabellingDatasetReader(object):
     def test_attributes_after_initialization(self, sequence_labelling_dataset_reader):
         args, dataset_reader = sequence_labelling_dataset_reader
@@ -43,6 +44,7 @@ class TestSequenceLabellingDatasetReader(object):
         assert not dataset_reader.skip_header
         assert dataset_reader.batch_sizes == args['batch_sizes']
         assert dataset_reader.lower == args['lower']
+        assert dataset_reader.sort_key == datasets.SequenceTaggingDataset.sort_key
 
     def test_textual_to_iterator(self, sequence_labelling_dataset_reader):
         args, dataset_reader = sequence_labelling_dataset_reader
@@ -50,18 +52,21 @@ class TestSequenceLabellingDatasetReader(object):
         train_iter, valid_iter, test_iter = dataset_reader.textual_to_iterator()
 
         train_batch = next(iter(train_iter))
-        # There are only 5 examples in the test data, so bs == 2
+        # There are only 2 examples in the test data, so bs == 2
         assert train_batch.text.size(0) == 2
         assert len(train_batch.label) == 2
+        assert len(train_batch.mask) == 2
 
         valid_batch = next(iter(valid_iter))
         assert valid_batch.text.size(0) == 2
         assert len(valid_batch.label) == 2
+        assert len(valid_batch.mask) == 2
 
         test_batch = next(iter(test_iter))
         assert test_batch.text.size(0) == 2
         assert len(test_batch.label) == 2
-'''
+        assert len(test_batch.mask) == 2
+
 
 class TestRelationClassificationDatasetReader(object):
     def test_attributes_after_initialization(self, relation_classification_dataset_reader):
@@ -132,6 +137,7 @@ class TestNLIDatasetReader(object):
         assert not dataset_reader.skip_header
         assert dataset_reader.batch_sizes == args['batch_sizes']
         assert dataset_reader.lower == args['lower']
+        assert dataset_reader.sort_key == datasets.nli.NLIDataset.sort_key
 
     def test_textual_to_iterator(self, nli_dataset_reader):
         args, dataset_reader = nli_dataset_reader
