@@ -137,6 +137,11 @@ class SequenceLabellingDatasetReader(DatasetReader):
             A tuple of `torchtext.data.iterator.BucketIterator` objects, one for each partition
             is `self.partitions`.
         """
+        def preprocessor(batch):
+            return self.tokenizer.encode(batch)
+
+        self.TEXT.preprocessing = preprocessor
+
         # Overwrite the parents LABEL field
         self.LABEL = data.Field(
             init_token=self.tokenizer.cls_token_id,
@@ -145,7 +150,20 @@ class SequenceLabellingDatasetReader(DatasetReader):
             pad_token=self.tokenizer.pad_token_id,
         )
 
-        fields = [('text', self.TEXT), ('label', self.LABEL)]
+        # HACK (John): Hopefully, this is temporary. This is a mask of the same length as TEXT and
+        # LABEL fields. It is 1 where an original token is found, and 0 otherwise (e.g. for special
+        # tokens, pads, and wordpiece tokens)
+        self.MASK = data.Field(
+            use_vocab=False,
+            init_token=0,
+            eos_token=0,
+            # Convert the mask to integers
+            preprocessing=lambda x: list(map(int, x)),
+            batch_first=True,
+            pad_token=0
+        )
+
+        fields = [('text', self.TEXT), ('label', self.LABEL), ('mask', self.MASK)]
 
         # Define the splits. Need path to directory (self.path), and then name of each file.
         splits = datasets.SequenceTaggingDataset.splits(
@@ -369,7 +387,7 @@ class NLIDatasetReader(DatasetReader):
             path=path, partitions=partitions, tokenizer=tokenizer, format='JSON', skip_header=False,
             batch_sizes=batch_sizes, lower=lower,
             # Sort examples according to length of premise and hypothesis
-            sort_key=lambda x: data.interleave_keys(len(x.premise), len(x.hypothesis))
+            sort_key=datasets.nli.NLIDataset.sort_key
         )
 
     def textual_to_iterator(self):
