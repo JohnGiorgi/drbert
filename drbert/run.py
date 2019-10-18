@@ -124,7 +124,7 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
                                                           output_device=args.local_rank,
                                                           find_unused_parameters=True)
 
-    # Train!
+    # Train
     logger.info("***** Running training *****")
     logger.info("  Num Examples = %d", num_examples)
     logger.info("  Num Epochs = %d", args.num_train_epochs)

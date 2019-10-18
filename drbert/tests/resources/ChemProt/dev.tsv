@@ -1,0 +1,6 @@
+index	sentence	label
+10064839.T49.T56	Binding of dimemorfan to @CHEMICAL$ and its anticonvulsant and locomotor effects in mice, compared with @GENE$ and dextrorphan.	false
+10064839.T50.T56	Binding of @CHEMICAL$ to @GENE$ and its anticonvulsant and locomotor effects in mice, compared with dextromethorphan and dextrorphan.	false
+10064839.T51.T56	Binding of dimemorfan to @CHEMICAL$ and its anticonvulsant and locomotor effects in mice, compared with dextromethorphan and @GENE$.	false
+10064839.T40.T54	This study therefore characterized the binding of @CHEMICAL$ to the @GENE$ and NMDA-linked PCP sites and examined the anticonvulsant as well as locomotor effects of DF in mice in comparison with those of DM and DR.	false
+10064839.T41.T54	This study therefore characterized the binding of DF to the @CHEMICAL$ and @GENE$-linked PCP sites and examined the anticonvulsant as well as locomotor effects of DF in mice in comparison with those of DM and DR.	false
