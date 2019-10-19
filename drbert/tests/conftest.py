@@ -49,7 +49,7 @@ def sequence_labelling_head(bert_config):
     # TODO (John): This will change when we decouple the model from these tasks.
     bert_config.__dict__['num_deid_labels'] = num_labels
 
-    head = SequenceLabellingHead(bert_config)
+    head = SequenceLabellingHead(bert_config, num_labels)
 
     return batch_size, sequence_length, num_labels, head
 
@@ -62,7 +62,7 @@ def sequence_classification_head(bert_config):
     # TODO (John): This will change when we decouple the model from these tasks.
     bert_config.__dict__['num_labels'] = num_labels
 
-    head = SequenceClassificationHead(bert_config)
+    head = SequenceClassificationHead(bert_config, num_labels)
 
     return batch_size, sequence_length, num_labels, head
 
@@ -77,7 +77,7 @@ def document_classification_head(bert_config):
     bert_config.__dict__['num_cohort_labels'] = num_labels
     bert_config.__dict__['cohort_ffnn_size'] = cohort_ffnn_size
 
-    head = DocumentClassificationHead(bert_config)
+    head = DocumentClassificationHead(bert_config, num_labels)
 
     return batch_size, sequence_length, num_labels, head
 
@@ -94,6 +94,7 @@ def dataset_reader(bert_tokenizer):
         'skip_header':   False,
         'batch_sizes':   (16,),
         'lower':         False,
+        'device':        'cpu'
     }
 
     dataset_reader = DatasetReader(**args)
@@ -114,6 +115,7 @@ def sequence_labelling_dataset_reader(bert_tokenizer):
         'tokenizer':     bert_tokenizer,
         'batch_sizes':   (16, 256, 256),
         'lower':         False,
+        'device':        'cpu'
     }
 
     dataset_reader = SequenceLabellingDatasetReader(**args)
@@ -133,6 +135,7 @@ def relation_classification_dataset_reader(bert_tokenizer):
         'tokenizer':     bert_tokenizer,
         'batch_sizes':   (16, 256, 256),
         'lower':         False,
+        'device':        'cpu'
     }
 
     dataset_reader = RelationClassificationDatasetReader(**args)
@@ -151,6 +154,7 @@ def document_classification_dataset_reader(bert_tokenizer):
         'tokenizer':     bert_tokenizer,
         'batch_sizes':   (16, 256),
         'lower':         False,
+        'device':        'cpu'
     }
 
     dataset_reader = DocumentClassificationDatasetReader(**args)
@@ -170,6 +174,7 @@ def nli_dataset_reader(bert_tokenizer):
         'tokenizer':     bert_tokenizer,
         'batch_sizes':   (16, 256, 256),
         'lower':         False,
+        'device':        'cpu'
     }
 
     dataset_reader = NLIDatasetReader(**args)

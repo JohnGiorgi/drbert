@@ -16,6 +16,7 @@ class TestDatasetReader(object):
         assert dataset_reader.skip_header == args['skip_header']
         assert dataset_reader.batch_sizes == args['batch_sizes']
         assert dataset_reader.lower == args['lower']
+        assert dataset_reader.device == args['device']
 
     def test_value_error_not_tuple(self, dataset_reader):
         args, dataset_reader = dataset_reader
@@ -28,6 +29,22 @@ class TestDatasetReader(object):
         args, dataset_reader = dataset_reader
         # Change batch_size to be longer than len(partitions) to trigger ValueError
         args['batch_sizes'] = (16, 256)
+
+        with pytest.raises(ValueError):
+            DatasetReader(*args)
+
+    def test_value_error_no_train(self, dataset_reader):
+        args, dataset_reader = dataset_reader
+        # Remove train partition to trigger ValueError
+        del args['partitions']['train']
+
+        with pytest.raises(ValueError):
+            DatasetReader(*args)
+
+    def test_value_error_invalid_partition(self, dataset_reader):
+        args, dataset_reader = dataset_reader
+        # Add invalid partition to trigger ValueError
+        args['partitions']['not valid'] = None
 
         with pytest.raises(ValueError):
             DatasetReader(*args)
@@ -45,11 +62,16 @@ class TestSequenceLabellingDatasetReader(object):
         assert dataset_reader.batch_sizes == args['batch_sizes']
         assert dataset_reader.lower == args['lower']
         assert dataset_reader.sort_key == datasets.SequenceTaggingDataset.sort_key
+        assert dataset_reader.device == args['device']
 
     def test_textual_to_iterator(self, sequence_labelling_dataset_reader):
         args, dataset_reader = sequence_labelling_dataset_reader
 
-        train_iter, valid_iter, test_iter = dataset_reader.textual_to_iterator()
+        iterators = dataset_reader.textual_to_iterator()
+
+        train_iter = iterators['train']
+        valid_iter = iterators['validation']
+        test_iter = iterators['test']
 
         train_batch = next(iter(train_iter))
         # There are only 2 examples in the test data, so bs == 2
@@ -79,11 +101,16 @@ class TestRelationClassificationDatasetReader(object):
         assert dataset_reader.skip_header
         assert dataset_reader.batch_sizes == args['batch_sizes']
         assert dataset_reader.lower == args['lower']
+        assert dataset_reader.device == args['device']
 
     def test_textual_to_iterator(self, relation_classification_dataset_reader):
         args, dataset_reader = relation_classification_dataset_reader
 
-        train_iter, valid_iter, test_iter = dataset_reader.textual_to_iterator()
+        iterators = dataset_reader.textual_to_iterator()
+
+        train_iter = iterators['train']
+        valid_iter = iterators['validation']
+        test_iter = iterators['test']
 
         train_batch = next(iter(train_iter))
         # There are only 5 examples in the test data, so bs == 5
@@ -110,11 +137,15 @@ class TestDocumentClassificationDatasetReader(object):
         assert not dataset_reader.skip_header
         assert dataset_reader.batch_sizes == args['batch_sizes']
         assert dataset_reader.lower == args['lower']
+        assert dataset_reader.device == args['device']
 
     def test_textual_to_iterator(self, document_classification_dataset_reader):
         args, dataset_reader = document_classification_dataset_reader
 
-        train_iter, test_iter = dataset_reader.textual_to_iterator()
+        iterators = dataset_reader.textual_to_iterator()
+
+        train_iter = iterators['train']
+        test_iter = iterators['test']
 
         train_batch = next(iter(train_iter))
         # There are only 5 examples in the test data, so bs == 5
@@ -138,11 +169,16 @@ class TestNLIDatasetReader(object):
         assert dataset_reader.batch_sizes == args['batch_sizes']
         assert dataset_reader.lower == args['lower']
         assert dataset_reader.sort_key == datasets.nli.NLIDataset.sort_key
+        assert dataset_reader.device == args['device']
 
     def test_textual_to_iterator(self, nli_dataset_reader):
         args, dataset_reader = nli_dataset_reader
 
-        train_iter, valid_iter, test_iter = dataset_reader.textual_to_iterator()
+        iterators = dataset_reader.textual_to_iterator()
+
+        train_iter = iterators['train']
+        valid_iter = iterators['validation']
+        test_iter = iterators['test']
 
         train_batch = next(iter(train_iter))
         # There are only 5 examples in the test data, so bs == 5
