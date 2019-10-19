@@ -6,7 +6,11 @@ PAD = '[PAD]'
 WORDPIECE = 'X'
 BERT_MAX_SENT_LEN = 512
 
-TASKS = {'sequence_labelling', 'sequence_classification', 'document_classification'}
+PARTITIONS = {'train', 'validation', 'test'}
+
+TASKS = {'sequence_labelling', 'relation_classification', 'document_classification', 'nli'}
+SEQUENCE_CLASSIFICATION_TASKS = {'relation_classification', 'nli'}
+
 
 DEID_TYPES = [
     PAD,

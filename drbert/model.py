@@ -1,9 +1,14 @@
 import logging
+import warnings
 
+from torch import nn
 from transformers import BertModel
 from transformers.modeling_bert import BertPreTrainedModel
 
+from .constants import SEQUENCE_CLASSIFICATION_TASKS
+from .constants import TASKS
 from .heads import DocumentClassificationHead
+from .heads import SequenceClassificationHead
 from .heads import SequenceLabellingHead
 
 logger = logging.getLogger(__name__)
@@ -13,29 +18,19 @@ class DrBERT(BertPreTrainedModel):
     def __init__(self, config):
         super(DrBERT, self).__init__(config)
 
-        # TODO (John): This will eventually be decoupled from the deid/cohort tasks
-        self.num_deid_labels = config.num_deid_labels
-        # Document classification labels can be a tuple (for multi-label) or integer (multi-class).
-        self.num_cohort_labels = \
-            (config.num_cohort_labels if isinstance(config.num_cohort_labels, (list, tuple))
-             else (1, config.num_cohort_labels))
-
         # Core BERT model
         self.bert = BertModel(config)
         self.init_weights()
 
-        # TODO (John): In the future, heads will be defined within a configuration file
-        # passed to the constructor of this object.
-        # DeID head
-        self.deid_head = SequenceLabellingHead(config)
-        # Cohort head
-        self.cohort_head = DocumentClassificationHead(config)
+        self.classification_heads = nn.ModuleDict()
 
     def forward(self, input_ids, attention_mask=None, token_type_ids=None, position_ids=None,
-                head_mask=None, labels=None, task=None):
-        if task not in ['deid', 'cohort'] and task is not None:
-            raise ValueError(('Task must be one of "deid", "cohort" or None (for inference).'
-                              'Got {task}.'))
+                head_mask=None, labels=None, name=None):
+        if name is not None and name not in set(self.classification_heads.keys()):
+            err_msg = (f"name must belong to one of the registered classification heads. Expected"
+                       f" one of {list(self.classification_heads.keys())}. Got '{name}'.")
+            logger.error('ValueError: %s', err_msg)
+            raise ValueError(err_msg)
 
         inputs = {
             "bert": self.bert,
@@ -47,30 +42,55 @@ class DrBERT(BertPreTrainedModel):
             "labels": labels,
         }
 
-        # TODO (John): In the future, a given forward pass will trigger forward passes for each
-        # and every head, unless otherwise specified.
-        # If labels are provided, compute a loss for ONE task
-        if labels is not None:
-            if task is None:
-                raise ValueError('If labels is not None, task must be one of "deid", "cohort".')
-            if task == 'deid':
-                outputs = self.deid_head(**inputs)
-            elif task == 'cohort':
-                outputs = self.cohort_head(**inputs)
-        # Otherwise, we are performing inference
+        # If name is provided, we are feeding the data through BERT + ONE classification head
+        if name is not None:
+            outputs = self.classification_heads[name](**inputs)
+        # Otherwise, assume we are performing inference using ALL classification heads
         else:
-            if task == 'deid':
-                outputs = self.deid_head(**inputs)
-            elif task == 'cohort':
-                outputs = self.cohort_head(**inputs)
-            else:
-                deid_outputs = self.deid_head(**inputs)
-                cohort_outputs = self.cohort_head(**inputs)
-
-                deid_logits = deid_outputs[0]
-                cohort_logits = cohort_outputs[0]
-
-                # TODO (John): This looks wrong? Logits should come second.
-                outputs = (deid_logits, cohort_logits) + outputs
+            if labels is not None:
+                warnings.warn('"task" is None but "labels" were given, they will be ignored.')
+            outputs = {}
+            for name, head in self.classification_heads.items():
+                outputs[name] = head(**inputs)
 
         return outputs  # (loss), scores, (hidden_states), (attentions)
+
+    def register_classification_head(self, name, task, num_labels):
+        """Register a new classification head.
+
+        Args:
+            name (str): A unique name which can be used to access the classification head.
+            task (str): Which type of task this classification head will perform. Must be in
+                `constants.TASKS`.
+            num_labels (int or tuple): The number of target classes for this head. Will be a tuple
+                in the case of multi-label datasets.
+
+        Raises:
+            ValueError: If `name` is already registered (i.e. it is in `self.classification_heads`).
+            ValueError: If `task` is not in `constants.TASKS`.
+
+        Returns:
+            torch.nn.Module: The classification head created.
+        """
+        if name in self.classification_heads:
+            err_msg = (f'{name} is already a registered classification head. Please use'
+                       ' unique names for each head.')
+            logger.error('ValueError: %s', err_msg)
+            raise ValueError(err_msg)
+        if task not in TASKS:
+            err_msg = f'task must be one of {TASKS}. Got {task}'
+            raise ValueError(err_msg)
+
+        if task == 'sequence_labelling':
+            self.classification_heads[name] = SequenceLabellingHead(self.config, num_labels)
+        elif task == 'document_classification':
+            raise NotImplementedError('Document classification is not yet implemented.')
+        elif task in SEQUENCE_CLASSIFICATION_TASKS:
+            self.classification_heads[name] = SequenceClassificationHead(self.config, num_labels)
+
+        # HACK (John): This assumes all params on same device. Is there a better way to do this?
+        # Place the head on the same device as its parent model
+        device = next(self.parameters()).device
+        self.classification_heads[name] = self.classification_heads[name].to(device)
+
+        return self.classification_heads[name]

@@ -37,13 +37,12 @@ class SequenceLabellingHead(torch.nn.Module):
         >>> outputs = head(bert, input_ids, labels=labels)
         >>> loss, scores = outputs[:2]
     """
-    def __init__(self, config):
+    def __init__(self, config, num_labels):
         super(SequenceLabellingHead, self).__init__()
-        # TODO (John): This will eventually be decoupled from the deids task
-        self.num_labels = config.num_deid_labels
+        self.num_labels = num_labels
 
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        self.classifier = torch.nn.Linear(config.hidden_size, config.num_deid_labels)
+        self.classifier = torch.nn.Linear(config.hidden_size, num_labels)
 
     def forward(self, bert, input_ids, attention_mask=None, token_type_ids=None, position_ids=None,
                 head_mask=None, labels=None):
@@ -102,12 +101,12 @@ class SequenceClassificationHead(torch.nn.Module):
         >>> outputs = head(bert, input_ids, labels=labels)
         >>> loss, logits = outputs[:2]
     """
-    def __init__(self, config):
+    def __init__(self, config, num_labels):
         super(SequenceClassificationHead, self).__init__()
-        self.num_labels = config.num_labels
+        self.num_labels = num_labels
 
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        self.classifier = nn.Linear(config.hidden_size, config.num_labels)
+        self.classifier = nn.Linear(config.hidden_size, num_labels)
 
     def forward(self, bert, input_ids, attention_mask=None, token_type_ids=None, position_ids=None,
                 head_mask=None, labels=None):
@@ -166,11 +165,10 @@ class DocumentClassificationHead(torch.nn.Module):
         >>> outputs = head(bert, input_ids, labels=labels)
         >>> loss, logits = outputs[:2]
     """
-    def __init__(self, config):
+    def __init__(self, config, num_labels):
         super(DocumentClassificationHead, self).__init__()
-        # TODO (John): This will eventually be decoupled from the cohort task
         # For non-multi label datasets, num_classes[0] will be 1
-        self.num_labels = config.num_cohort_labels
+        self.num_labels = num_labels
 
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
         self.lstm = nn.LSTM(
@@ -182,7 +180,7 @@ class DocumentClassificationHead(torch.nn.Module):
             bidirectional=True,
         )
 
-        self.classifier = nn.Linear(config.cohort_ffnn_size * 2, self.num_labels[0] * self.num_labels[1])
+        self.classifier = nn.Linear(config.cohort_ffnn_size * 2, num_labels[0] * num_labels[1])
 
     def forward(self, bert, input_ids, attention_mask=None, token_type_ids=None, position_ids=None,
                 head_mask=None, labels=None):

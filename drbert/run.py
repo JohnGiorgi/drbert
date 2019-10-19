@@ -25,9 +25,6 @@ import random
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader
-from torch.utils.data import RandomSampler
-from torch.utils.data.distributed import DistributedSampler
 from tqdm import trange
 from transformers import AutoConfig
 from transformers import AutoTokenizer
@@ -35,15 +32,15 @@ from transformers.modeling_utils import WEIGHTS_NAME
 
 from tensorboardX import SummaryWriter
 
-from .constants import COHORT_DISEASE_LIST
-from .constants import COHORT_INTUITIVE_LABEL_CONSTANTS
-from .constants import COHORT_TEXTUAL_LABEL_CONSTANTS
 from .constants import DEID_LABELS
+from .data.dataset_readers import DocumentClassificationDatasetReader
+from .data.dataset_readers import NLIDatasetReader
+from .data.dataset_readers import RelationClassificationDatasetReader
+from .data.dataset_readers import SequenceLabellingDatasetReader
 from .eval import evaluate
 from .model import DrBERT
-from .utils import data_utils
-from .utils import eval_utils
 from .utils import train_utils
+from .proportional_batch_sampler import ProportionalBatchSampler
 
 logger = logging.getLogger(__name__)
 
@@ -56,15 +53,11 @@ def set_seed(args):
         torch.cuda.manual_seed_all(args.seed)
 
 
-def train(args, deid_dataset, cohort_dataset, model, tokenizer):
+def train(args, model, tokenizer):
     """Coordinates training of DrBERT.
 
     Args:
         args (ArgumentParser): Object containing objects parsed from the command line.
-        deid_dataset (dict): A dictionary, keyed by partition, containing a TensorDataset for each
-            partition of the DeID dataset.
-        cohort_dataset (dict): A dictionary, keyed by partition, containing a TensorDataset for each
-            partition of the Cohort Identification dataset.
         model (nn.Module): The DrBERT model to train.
         tokenizer (BertTokenizer): A transformers tokenizer object.
 
@@ -74,28 +67,48 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
     if args.local_rank in [-1, 0]:
         tb_writer = SummaryWriter()
 
-    # TODO (John): Preperation of dataloaders is hardcoded. Need to move to JSON configurable.
-    # Prepare dataloaders
-    deid_sampler = (RandomSampler(deid_dataset['train']) if args.local_rank == -1
-                    else DistributedSampler(deid_dataset['train']))
-    deid_dataloader = \
-        DataLoader(deid_dataset['train'], sampler=deid_sampler, batch_size=args.train_batch_size)
-
-    cohort_sampler = (RandomSampler(cohort_dataset['train']) if args.local_rank == -1
-                      else DistributedSampler(cohort_dataset['train']))
-    # batch_size hardcoded to 1 because these sentences are grouped by document
-    cohort_dataloader = DataLoader(cohort_dataset['train'], sampler=cohort_sampler, batch_size=1)
-
     # TODO (John): Hardcoded, but an example of what the JSON will look like
     tasks = [
-        {'name': 'deid', 'task': 'sequence_labelling', 'iterator': deid_dataloader},
-        {'name': 'cohort', 'task': 'document classification', 'iterator': cohort_dataloader},
+        {
+            'name': 'MedNLI',
+            'task': 'nli',
+            'path': args.dataset_folder,
+            'partitions': {
+                'train': 'mli_train_v1.jsonl',
+                'validation': 'mli_dev_v1.jsonl',
+                'test': 'mli_test_v1.jsonl',
+            },
+            'batch_sizes': (16, 256, 256),
+            'lower': True,
+            'num_labels': 3,
+        }
     ]
 
-    # TODO (John): These two lines will change when we switch to torchtext
-    # The number of batches / examples the sum of the number of batches / examples from all tasks
-    num_examples = sum([len(task['iterator'].dataset) for task in tasks])
-    num_batches = sum([len(task['iterator']) for task in tasks])
+    # Load the datasets and register the classification heads based on the provided JSON config
+    for task in tasks:
+        if task['task'] == 'sequence_labelling':
+            task['iterators'] = SequenceLabellingDatasetReader(
+                tokenizer=tokenizer, device=args.device, **task
+            ).textual_to_iterator()
+        elif task['task'] == 'relation_classification':
+            task['iterators'] = RelationClassificationDatasetReader(
+                tokenizer=tokenizer, device=args.device, **task
+            ).textual_to_iterator()
+        elif task['task'] == 'document_classification':
+            raise NotImplementedError('Document classification is not yet implemented.')
+        elif task['task'] == 'nli':
+            task['iterators'] = NLIDatasetReader(
+                tokenizer=tokenizer, device=args.device, **task
+            ).textual_to_iterator()
+
+        model.register_classification_head(
+            name=task['name'], task=task['task'], num_labels=task['num_labels']
+        )
+
+    # The number of batches / examples is the sum of the number of batches / examples from all tasks
+    # TODO (John): How to get this from torchtext iterator?
+    # num_examples = sum([len(task['iterators'][0].dataset) for task in tasks])
+    num_batches = sum([len(task['iterators']['train']) for task in tasks])
 
     if args.max_steps > 0:
         t_total = args.max_steps
@@ -126,12 +139,13 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
 
     # Train
     logger.info("***** Running training *****")
-    logger.info("  Num Examples = %d", num_examples)
-    logger.info("  Num Epochs = %d", args.num_train_epochs)
-    logger.info("  Total train batch size (w. parallel, distributed & accumulation) = %d",
-                (args.train_batch_size * torch.distributed.get_world_size() if args.local_rank != -1 else 1)
-                )
-    logger.info("  Total optimization steps = %d", t_total)
+    # TODO (John): How to get # of examples from torchtext iterators?
+    # logger.info("  Num Examples = %d", num_examples)
+    logger.info(f"  Num Epochs = {args.num_train_epochs}")
+    total_train_bs = \
+        args.train_batch_size * torch.distributed.get_world_size() if args.local_rank != -1 else 1
+    logger.info(f"  Total train batch size (w. parallel, distributed) = {total_train_bs}")
+    logger.info(f"  Total optimization steps = {t_total}")
 
     task_step = {task['name']: 0 for task in tasks}
     tr_loss = {task['name']: 0.0 for task in tasks}
@@ -147,48 +161,38 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
     set_seed(args)  # Added here for reproductibility (even between python 2 and 3)
 
     for _, _ in enumerate(train_iterator):
-        '''
-        epoch_iterator = tqdm(zip_longest(task['iterator'] for task in tasks),
-                              unit="batch", desc="Iteration",
-                              total=num_batches,
-                              disable=args.local_rank not in [-1, 0],
-                              dynamic_ncols=True)
-        '''
-        task_ids = list(range(len(tasks)))
         epoch_iterator = trange(num_batches,
                                 unit="batch",
                                 desc="Iteration",
                                 disable=args.local_rank not in [-1, 0],
                                 dynamic_ncols=True)
+
+        batch_sampler = ProportionalBatchSampler(tasks, 'train')
+
         for step, _ in enumerate(epoch_iterator):
             model.train()
 
-            # Training order of two tasks is chosen at random every batch.
-            while True:
-                task_id = random.choice(task_ids)
-                try:
-                    name, task, iterator = tasks[task_id].values()
-                    batch = next(iter(iterator))
-                    break
-                except StopIteration:
-                    # Remove task_id from candidates once we have exuasted that tasks iterator
-                    del task_ids[task_id]
+            # Training order of tasks is chosen using proportional sampling
+            name, batch = batch_sampler.get_batch()
 
-            # Dataloader introduces a first dimension of size one
-            if task == 'document_classification':
-                batch[0] = batch[0].squeeze(0)
-                batch[1] = batch[1].squeeze(0)
-                batch[2] = batch[2].squeeze(0)
+            # Generate inputs based on the task
+            if task['task'] == 'document_classification':
+                raise NotImplementedError('Document classification is not yet implemented.')
+            elif task['task'] == 'nli':
+                input_ids = torch.cat((batch.premise, batch.hypothesis[:, 1:]), dim=-1)
+                inputs = {'input_ids': input_ids, 'labels': batch.label, 'name': name}
+            else:
+                inputs = {'input_ids': batch.text, 'labels': batch.label, 'name': name}
 
-            batch = tuple(t.to(args.device) for t in batch)
-
-            inputs = {'input_ids':      batch[0],
-                      'attention_mask': batch[1],
-                      'labels':         batch[2],
-                      'task':           task,
-                      }
+            # Generate attention masks on the fly
+            inputs['attention_mask'] = torch.where(
+                inputs['input_ids'] == tokenizer.pad_token_id,
+                torch.zeros_like(inputs['input_ids']),
+                torch.ones_like(inputs['input_ids'])
+             )
 
             outputs = model(**inputs)
+
             loss = outputs[0]  # outputs are always tuple in transformers (see doc)
 
             if args.n_gpu > 1:
@@ -215,13 +219,16 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
                 # Only evaluate when single GPU otherwise metrics may not average well
                 if args.local_rank == -1 and args.evaluate_during_training:
                     results = {}
+                    # TODO (John): This needs to be updated for new setup
+                    '''
                     for task in tasks:
                         name, task, iterator = task.values()
-                        results[name] = evaluate(args, model, iterator.dataset, task)
+                        results[name] = evaluate(args, model, tasks)
 
                     # HACK (John): This is a temporary. Need a more principled API for
                     # saving results to disk.
                     eval_utils.save_eval_to_disk(args, step, **results)
+                    '''
 
                     ''' TODO
                     for key, value in deid_results.items():
@@ -230,7 +237,9 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
                         tb_writer.add_scalar('cohort_eval_{}'.format(key), value, global_step)
                     '''
                 tb_writer.add_scalar('lr', scheduler.get_lr()[0], step)
-                tb_writer.add_scalar(f'{name}_loss', (tr_loss[name] - logging_loss[name]) / args.logging_steps, task_step[name])
+                tb_writer.add_scalar(
+                    f'{name}_loss', (tr_loss[name] - logging_loss[name]) / args.logging_steps, task_step[name]
+                )
                 logging_loss[name] = tr_loss[name]
 
             # Save model checkpoint
@@ -243,9 +252,10 @@ def train(args, deid_dataset, cohort_dataset, model, tokenizer):
                 torch.save(args, os.path.join(output_dir, 'training_args.bin'))
                 logger.info("Saving model checkpoint to %s", output_dir)
 
-            postfix = \
-                {f'{name}_loss': f'{(tr_loss[name] / task_step[name]):.6f}' for name in tr_loss}
-            postfix['total_loss'] = sum(postfix.values())
+            postfix = {
+                f'{name}_loss': f'{(tr_loss[name] / task_step[name]):.6f}' for name in tr_loss
+            }
+            postfix['total_loss'] = f'{sum([float(loss) for loss in list(postfix.values())]):.6f}'
 
             epoch_iterator.set_postfix(postfix)
 
@@ -272,9 +282,6 @@ def main():
     parser = argparse.ArgumentParser()
 
     # Required parameters
-    # TODO (John): If "technical debt" had a dictionary entry they would show this as example
-    parser.add_argument("--cohort_type", default='textual', choices=['textual', 'intuitive'], type=str, help="what do you think this is")
-
     parser.add_argument("--dataset_folder", default=None, type=str, required=True,
                         help="De-id and co-hort identification data directory.")
     parser.add_argument("--model_name_or_path", default=None, type=str, required=True,
@@ -395,24 +402,6 @@ def main():
         do_lower_case=args.do_lower_case
     )
 
-    # Process the data
-    deid_dataset, deid_class_weights = data_utils.prepare_deid_dataset(args, tokenizer)
-    cohort_dataset = data_utils.prepare_cohort_dataset(args, tokenizer)
-
-    # Here, we add any additional configs to the Pytorch Transformers config file. These will be
-    # saved to a `output_dir/config.json` file when we call model.save_pretrained(output_dir)
-    config.__dict__['num_deid_labels'] = len(DEID_LABELS)
-    # Num of labels is dependent on whether we are running the textual or intuitive analysis
-    if args.cohort_type:
-        config.__dict__['num_cohort_labels'] = \
-            len(COHORT_DISEASE_LIST), len(COHORT_TEXTUAL_LABEL_CONSTANTS)
-    else:
-        config.__dict__['num_cohort_labels'] = \
-            len(COHORT_DISEASE_LIST), len(COHORT_INTUITIVE_LABEL_CONSTANTS)
-    config.__dict__['cohort_ffnn_size'] = 512
-    config.__dict__['max_batch_size'] = args.train_batch_size
-    config.__dict__['deid_class_weights'] = deid_class_weights
-
     model = DrBERT.from_pretrained(
         pretrained_model_name_or_path=args.model_name_or_path,
         config=config
@@ -428,7 +417,7 @@ def main():
 
     # Training
     if args.do_train:
-        global_step, tr_loss = train(args, deid_dataset, cohort_dataset, model, tokenizer)
+        global_step, tr_loss = train(args, model, tokenizer)
         logger.info(" global_step = %s, average loss = %s", global_step, tr_loss)
 
     # Save the trained model and the tokenizer

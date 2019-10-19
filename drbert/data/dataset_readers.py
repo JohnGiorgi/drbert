@@ -1,43 +1,56 @@
-import os
 import json
+import os
 
 from torchtext import data
 from torchtext import datasets
 
+from ..constants import PARTITIONS
+
 
 class DatasetReader(object):
     """The parent class for all dataset readers. A user is mean to interact with a subclass of this
-    class (e.g. DocumentClassificationDatasetReader), not this class itself.
+    class (e.g. `DocumentClassificationDatasetReader`), not this class itself.
 
     Args:
         path (str): Common prefix of the splits’ file paths.
-        partitions (dict): A dictionary keyed by partition ('train', 'test', 'validation')
+        partitions (dict): A dictionary keyed by partition(s) ('train', 'validation', 'test')
             containing the suffix to add to `path` for that partition.
         tokenizer (transformers.PreTrainedTokenizer): The function used to tokenize strings into
             sequential examples.
         format (str): Format of the data file. One of “CSV”, “TSV”, or “JSON” (case-insensitive).
-        skip_header (bool) : Optional, whether to skip the first line of the input file. Defaults to
+        skip_header (bool, pptional): Whether to skip the first line of the input file. Defaults to
             False.
-        batch_sizes (tuple): Optional, tuple of batch sizes to use for the different splits, or None
+        batch_sizes (tuple, optional): Tuple of batch sizes to use for the different splits, or None
             to use the same batch_size for all splits. Defaults to None.
-        lower: (bool): Optional, True if text should be lower cased, False if not. Defaults to
+        lower: (bool, optional): True if text should be lower cased, False if not. Defaults to
             False.
         sort_key (function): A key to use for sorting examples in order to batch together examples
             with similar lengths and minimize padding. The sort_key provided to the Iterator
             constructor overrides the sort_key attribute of the Dataset, or defers to it if None.
+        device (str or torch.device, optional): A string or instance of torch.device specifying
+            which device the Tensors are going to be created on. If left as default, the tensors
+            will be created on cpu. Default: None.
 
     Raises:
         ValueError: If batch_sizes is not a tuple or None.
         ValueError: If batch_sizes is not None and `len(batch_sizes) != len(partitions)`.
+        ValueError: If 'train' not `partitions`.
+        ValueError: If any key in `partitions` is not in `PARTITIONS`.
     """
-    def __init__(self, path, partitions, tokenizer, format, skip_header=False, batch_sizes=None,
-                 lower=False, sort_key=None):
+    def __init__(self, path, partitions, tokenizer, format, skip_header=False,
+                 batch_sizes=None, lower=False, sort_key=None, device='cpu'):
         if batch_sizes is not None:
             if not isinstance(batch_sizes, tuple):
                 raise ValueError(f"'batch_sizes' must be a tuple. Got: {batch_sizes}")
             if len(partitions) != len(batch_sizes):
                 raise ValueError(f"(len(batch_sizes) ({len(batch_sizes)}) must equal the number of"
                                  f" partitions ({len(partitions)})")
+        if 'train' not in partitions:
+            raise ValueError(f'"train" must be a key in "partitions". Got keys: {partitions.keys()}')
+        for partition in partitions:
+            if partition not in {'train', 'validation', 'test'}:
+                raise ValueError((f"Found invalid key ({partition}) in partitions. All keys must be"
+                                  f" one of {PARTITIONS}"))
 
         self.path = path
         self.partitions = partitions
@@ -47,6 +60,7 @@ class DatasetReader(object):
         self.batch_sizes = batch_sizes
         self.lower = lower
         self.sort_key = sort_key
+        self.device = device
 
         # These are the default fields that can be updated by subclasses if necessary
         self.TEXT = data.Field(
@@ -64,23 +78,63 @@ class DatasetReader(object):
         )
         self.LABEL = data.LabelField()
 
-    def textual_to_iterator(self, fields):
-        # Define the splits. Need path to directory (self.path), and then name of each file.
-        splits = data.TabularDataset.splits(
-            path=self.path,
-            **self.partitions,
-            format=self.format,
-            fields=fields,
-            skip_header=self.skip_header
-        )
+    def textual_to_iterator(self, fields, datasets=None, **kwargs):
+        """"
+
+        Args:
+            fields (list or dict): If using a list, the format must be CSV or TSV, and the values of
+                the list should be tuples of (name, field). The fields should be in the same order
+                as the columns in the CSV or TSV file, while tuples of (name, None) represent
+                columns that will be ignored.
+            datasets (tuple, optional): A tuple of torchtext Dataset objects. If None,
+                these are loaded via `data.TabularDataset.splits()`. Defaults to None.
+            kwargs: Remaining keyword arguments are passed to the `data.TabularDataset.splits` and
+                `data.BucketIterator.splits` classes.
+
+        Returns:
+            tuple: A tuple of dictionaries keyed by partitions (`self.partitions.keys()`) containing
+            the torchtext `Dataset` and torchtext `Iterator` objects respectively.
+        """
+        if datasets is None:
+            # Define the splits. Need path to directory (self.path), and then name of each file.
+            datasets_ = data.TabularDataset.splits(
+                path=self.path,
+                **self.partitions,
+                format=self.format,
+                fields=fields,
+                skip_header=self.skip_header
+            )
+        else:
+            datasets_ = datasets
 
         # Define the iterator. Batch sizes are defined per partition.
         # BucketIterator groups sentences of similar length together to minimize padding.
-        iterators = data.BucketIterator.splits(
-            splits, batch_sizes=self.batch_sizes, sort_key=self.sort_key
+        iterators_ = data.BucketIterator.splits(
+            datasets_, batch_sizes=self.batch_sizes, sort_key=self.sort_key, device=self.device,
+            **kwargs
         )
 
-        return splits, iterators
+        # Finally, build the vocab. This "numericalizes" the field.
+        self.LABEL.build_vocab(*(split.label for split in datasets_))
+
+        # Create dictionary of splits_ / iterators_ keyed by partition
+        iterators, datasets = {}, {}
+
+        # BucketIterator assumes the first dataset is the train partition
+        datasets['train'] = datasets_[0]
+        iterators['train'] = iterators_[0]
+
+        # If a validation set was provided, it will be the second item in splits_ / iterators_
+        if 'validation' in self.partitions:
+            datasets['validation'] = datasets_[1]
+            iterators['validation'] = iterators_[1]
+            if 'test' in self.partitions:
+                datasets['test'] = datasets_[2]
+                iterators['test'] = iterators_[2]
+        elif 'test' in self.partitions:
+            iterators['test'] = iterators_[1]
+
+        return datasets, iterators
 
 
 class SequenceLabellingDatasetReader(DatasetReader):
@@ -112,7 +166,7 @@ class SequenceLabellingDatasetReader(DatasetReader):
 
     Args:
         path (str): Common prefix of the splits’ file paths.
-        partitions (dict): A dictionary keyed by partition ('train', 'test', 'validation')
+        partitions (dict): A dictionary keyed by partition ('train', 'validation', 'test')
             containing the suffix to add to `path` for that partition.
         tokenizer (transformers.PreTrainedTokenizer): The function used to tokenize strings into
             sequential examples.
@@ -120,16 +174,19 @@ class SequenceLabellingDatasetReader(DatasetReader):
             to use the same batch_size for all splits. Defaults to None.
         lower: (bool): Optional, True if text should be lower cased, False if not. Defaults to
             False.
+        kwargs: Remaining keyword arguments. Will be ignored.
     """
-    def __init__(self, path, partitions, tokenizer, batch_sizes=None, lower=False):
+    def __init__(self, path, partitions, tokenizer, batch_sizes=None, lower=False, device='cpu',
+                 **kwargs):
         super(SequenceLabellingDatasetReader, self).__init__(
-            path=path, partitions=partitions, tokenizer=tokenizer, format='TSV', skip_header=False,
+            path=path, partitions=partitions, tokenizer=tokenizer, format='tsv', skip_header=False,
             batch_sizes=batch_sizes, lower=lower,
             # Sort examples according to length of sentences
-            sort_key=datasets.SequenceTaggingDataset.sort_key
+            sort_key=datasets.SequenceTaggingDataset.sort_key,
+            device=device
         )
 
-    def textual_to_iterator(self):
+    def textual_to_iterator(self, **kwargs):
         """Does whatever tokenization or processing is necessary to go from textual input to
         iterators for training and evaluation for a sequence labelling dataset.
 
@@ -144,10 +201,12 @@ class SequenceLabellingDatasetReader(DatasetReader):
 
         # Overwrite the parents LABEL field
         self.LABEL = data.Field(
-            init_token=self.tokenizer.cls_token_id,
-            eos_token=self.tokenizer.sep_token_id,
+            init_token=self.tokenizer.cls_token,
+            eos_token=self.tokenizer.sep_token,
             batch_first=True,
-            pad_token=self.tokenizer.pad_token_id,
+            pad_token=self.tokenizer.pad_token,
+            unk_token=None,
+            is_target=True
         )
 
         # HACK (John): Hopefully, this is temporary. This is a mask of the same length as TEXT and
@@ -160,26 +219,23 @@ class SequenceLabellingDatasetReader(DatasetReader):
             # Convert the mask to integers
             preprocessing=lambda x: list(map(int, x)),
             batch_first=True,
-            pad_token=0
+            pad_token=0,
+            unk_token=None
         )
 
         fields = [('text', self.TEXT), ('label', self.LABEL), ('mask', self.MASK)]
 
-        # Define the splits. Need path to directory (self.path), and then name of each file.
-        splits = datasets.SequenceTaggingDataset.splits(
+        # Define the datasets. Need path to directory (self.path), and then name of each file.
+        datasets_ = datasets.SequenceTaggingDataset.splits(
             path=self.path,
             **self.partitions,
             fields=fields,
+            **kwargs
         )
 
-        # Define the iterator. Batch sizes are defined per partition.
-        # BucketIterator groups sentences of similar length together to minimize padding.
-        # Use sort_key to sort examples by length and group similar sized entries into batches
-        iterators = data.BucketIterator.splits(
-            splits, batch_sizes=self.batch_sizes, sort_key=self.sort_key)
-
-        # Finally, build the vocab. This "numericalizes" the field.
-        self.LABEL.build_vocab(*(split.label for split in splits))
+        _, iterators = super(SequenceLabellingDatasetReader, self).textual_to_iterator(
+            fields, datasets_, **kwargs
+        )
 
         return iterators
 
@@ -210,7 +266,7 @@ class RelationClassificationDatasetReader(DatasetReader):
 
     Args:
         path (str): Common prefix of the splits’ file paths.
-        partitions (dict): A dictionary keyed by partition ('train', 'test', 'validation')
+        partitions (dict): A dictionary keyed by partition ('train', 'validation', 'test')
             containing the suffix to add to `path` for that partition.
         tokenizer (transformers.PreTrainedTokenizer): The function used to tokenize strings into
             sequential examples.
@@ -218,19 +274,26 @@ class RelationClassificationDatasetReader(DatasetReader):
             to use the same batch_size for all splits. Defaults to None.
         lower: (bool): Optional, True if text should be lower cased, False if not. Defaults to
             False.
+        kwargs: Remaining keyword arguments. Will be ignored.
     """
-    def __init__(self, path, partitions, tokenizer, batch_sizes=None, lower=False):
+    def __init__(self, path, partitions, tokenizer, batch_sizes=None, lower=False,
+                 device='cpu', **kwargs):
 
         super(RelationClassificationDatasetReader, self).__init__(
-            path=path, partitions=partitions, tokenizer=tokenizer, format='TSV', skip_header=True,
+            path=path, partitions=partitions, tokenizer=tokenizer, format='tsv', skip_header=True,
             batch_sizes=batch_sizes, lower=lower,
             # Sort examples according to length of sentences
-            sort_key=lambda x: len(x.text)
+            sort_key=lambda x: len(x.text),
+            device=device
         )
 
-    def textual_to_iterator(self):
+    def textual_to_iterator(self, **kwargs):
         """Does whatever tokenization or processing is necessary to go from textual input to
         iterators for training and evaluation for a relation classification dataset.
+
+        Args:
+            kwargs: Passed to the `data.TabularDataset.splits` and
+            `data.BucketIterator.splits` class in the parent classes method `textual_to_iterator`.
 
         Returns:
             A tuple of `torchtext.data.iterator.BucketIterator` objects, one for each partition
@@ -238,11 +301,8 @@ class RelationClassificationDatasetReader(DatasetReader):
         """
         fields = [('index', None), ('text', self.TEXT), ('label', self.LABEL)]
 
-        splits, iterators = \
-            super(RelationClassificationDatasetReader, self).textual_to_iterator(fields)
-
-        # Finally, build the vocab. This "numericalizes" the field.
-        self.LABEL.build_vocab(*(split.label for split in splits))
+        _, iterators = \
+            super(RelationClassificationDatasetReader, self).textual_to_iterator(fields, **kwargs)
 
         return iterators
 
@@ -281,7 +341,7 @@ class DocumentClassificationDatasetReader(DatasetReader):
 
     Args:
         path (str): Common prefix of the splits’ file paths.
-        partitions (dict): A dictionary keyed by partition ('train', 'test', 'validation')
+        partitions (dict): A dictionary keyed by partition ('train', 'validation', 'test')
             containing the suffix to add to `path` for that partition.
         tokenizer (transformers.PreTrainedTokenizer): The function used to tokenize strings into
             sequential examples.
@@ -289,20 +349,25 @@ class DocumentClassificationDatasetReader(DatasetReader):
             to use the same batch_size for all splits. Defaults to None.
         lower: (bool): Optional, True if text should be lower cased, False if not. Defaults to
             False.
-        label_fields (list): Optional, a list containing the keys to all label fields in the JSON
-            lines file(s). If None, assume a multi-class dataset with a single label field
-            ("label"). Defaults to None.
+        kwargs: Remaining keyword arguments. Will be ignored.
     """
-    def __init__(self, path, partitions, tokenizer, batch_sizes=None, lower=False):
+    def __init__(self, path, partitions, tokenizer, batch_sizes=None, lower=False,
+                 device='cpu', **kwargs):
         super(DocumentClassificationDatasetReader, self).__init__(
-            path=path, partitions=partitions, tokenizer=tokenizer, format='JSON', skip_header=False,
+            path=path, partitions=partitions, tokenizer=tokenizer, format='json', skip_header=False,
             batch_sizes=batch_sizes, lower=lower,
             # Sort examples according to length of documents
-            sort_key=lambda x: len(x.text))
+            sort_key=lambda x: len(x.text),
+            device=device
+        )
 
-    def textual_to_iterator(self):
+    def textual_to_iterator(self, **kwargs):
         """Does whatever tokenization or processing is necessary to go from textual input to
         iterators for training and evaluation for a document classification dataset.
+
+        Args:
+            kwargs: Passed to the `data.TabularDataset.splits` and
+            `data.BucketIterator.splits` class in the parent classes method `textual_to_iterator`.
 
         Returns:
             A tuple of `torchtext.data.iterator.BucketIterator` objects, one for each partition
@@ -310,10 +375,7 @@ class DocumentClassificationDatasetReader(DatasetReader):
         """
         fields = self.get_fields()
 
-        splits, iterators = super().textual_to_iterator(fields)
-
-        # Finally, build the vocab. This "numericalizes" the field.
-        self.LABEL.build_vocab(*(split.label for split in splits))
+        _, iterators = super().textual_to_iterator(fields, **kwargs)
 
         return iterators
 
@@ -373,7 +435,7 @@ class NLIDatasetReader(DatasetReader):
 
     Args:
         path (str): Common prefix of the splits’ file paths.
-        partitions (dict): A dictionary keyed by partition ('train', 'test', 'validation')
+        partitions (dict): A dictionary keyed by partition ('train', 'validation', 'test')
             containing the suffix to add to `path` for that partition.
         tokenizer (transformers.PreTrainedTokenizer): The function used to tokenize strings into
             sequential examples.
@@ -381,18 +443,25 @@ class NLIDatasetReader(DatasetReader):
             to use the same batch_size for all splits. Defaults to None.
         lower: (bool): Optional, True if text should be lower cased, False if not. Defaults to
             False.
+        kwargs: Remaining keyword arguments. Will be ignored.
     """
-    def __init__(self, path, partitions, tokenizer, batch_sizes=None, lower=False):
+    def __init__(self, path, partitions, tokenizer, batch_sizes=None, lower=False,
+                 device='cpu', **kwargs):
         super(NLIDatasetReader, self).__init__(
-            path=path, partitions=partitions, tokenizer=tokenizer, format='JSON', skip_header=False,
+            path=path, partitions=partitions, tokenizer=tokenizer, format='json', skip_header=False,
             batch_sizes=batch_sizes, lower=lower,
             # Sort examples according to length of premise and hypothesis
-            sort_key=datasets.nli.NLIDataset.sort_key
+            sort_key=datasets.nli.NLIDataset.sort_key,
+            device=device
         )
 
-    def textual_to_iterator(self):
+    def textual_to_iterator(self, **kwargs):
         """Does whatever tokenization or processing is necessary to go from textual input to
         iterators for training and evaluation for a NLI dataset.
+
+        Args:
+            kwargs: Passed to the `data.TabularDataset.splits` and
+            `data.BucketIterator.splits` class in the parent classes method `textual_to_iterator`.
 
         Returns:
             A tuple of `torchtext.data.iterator.BucketIterator` objects, one for each partition
@@ -407,9 +476,6 @@ class NLIDatasetReader(DatasetReader):
             'gold_label': ('label', self.LABEL)
         }
 
-        splits, iterators = super(NLIDatasetReader, self).textual_to_iterator(fields)
-
-        # Finally, build the vocab. This "numericalizes" the field.
-        self.LABEL.build_vocab(*(split.label for split in splits))
+        _, iterators = super(NLIDatasetReader, self).textual_to_iterator(fields, **kwargs)
 
         return iterators
