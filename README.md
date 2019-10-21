@@ -28,45 +28,68 @@ pip install -e .[dev]
 
 ### Other installation requirements
 
-Regardless of the installation method, you will need to additionally download a [SpaCy](https://spacy.io/usage) language model:
-
-```
-$ python -m spacy download en_core_web_md
-```
+#### PyTorch
 
 For GPU support, make sure to install PyTorch 1.2.0+ with CUDA support. See [here](https://pytorch.org/get-started/locally/) for instructions.
+
+#### Apex
 
 Finally, for mixed-precision training, you will need to install Apex. See [here](https://github.com/NVIDIA/apex) for instructions.
 
 ## Usage
 
+The expected way to interact with `DrBERT` is through the `run.py` scripts. 
+
+> This script is modified from the `run_*.py` scripts of the [Transformers](https://github.com/huggingface/transformers) library.
+
+DrBERT is configured using a simple JSON file. The format is as follows:
+
+```json
+// The config is a list of dictionary-like objects, one per task. E.g.,
+[
+    {
+        "name": "example", // A string containing a unique name for this task
+        "task": "sequence_labelling", // A task name, see drbert.constants.TASKS for valid names
+        "path": "path/to/dataset", // Path to the dataset for this task
+        "partitions": { // Filenames for the individual partitions of this task
+            "train": "train.tsv",
+            "validation": "valid.tsv",
+            "test": "test.tsv"
+        },
+        "batch_sizes": [16, 256, 256], // A list of batch sizes for each of the partitions
+        "lower": true, // Whether or not the data should be lowercased
+    }
+]
 ```
+
+A user can specify an arbitrary number of tasks using this format, which will be used to train the model jointly.
+
+To train or evaluate the model, simply pass this configuration file to `run.py` along with any other arguments you would like to set. E.g.,
+
+```bash
 python -m drbert.run \
---dataset_folder ./path/to/dataset \
+--task_config path/to/tasks.json \
 --model_name_or_path bert-base-cased \
 --output_dir ./output \
---max_seq_length 364 \
 --do_train \
 --evaluate_during_training \
---train_batch_size 16 \
---eval_batch_size 256 \
 --learning_rate 2e-5 \
 --weight_decay 0.1 \
 --warmup 0.1 \
 --num_train_epochs 5 \
---logging_steps 3000 \
---save_steps 3000 \
+--logging_steps 1000 \
+--save_steps 1000 \
 --overwrite_output_dir \
 --fp16
 ```
 
-Call
+For more information on the possible arguments, call
 
 ```
 python -m drbert.run --help
 ```
 
-for more information on the possible arguments.
+
 
 ## Testing
 

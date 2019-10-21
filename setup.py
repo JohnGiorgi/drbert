@@ -31,11 +31,7 @@ setuptools.setup(
         'torchtext>=0.4.0',
         'tensorboard>=1.14.0',
         'transformers>=2.0.0',
-        'spacy>=2.1.4',
-        'Keras-Preprocessing>=1.1.0',
-        'nltk>=3.3',
         'PTable>=0.9.2',
-        'xmltodict>=0.12.0',
         'seqeval>=0.0.12',
         'scikit-learn>=0.21.2'
     ],
