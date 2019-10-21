@@ -16,6 +16,7 @@ class TestDatasetReader(object):
         assert dataset_reader.skip_header == args['skip_header']
         assert dataset_reader.batch_sizes == args['batch_sizes']
         assert dataset_reader.lower == args['lower']
+        assert not dataset_reader.sort_key
         assert dataset_reader.device == args['device']
 
     def test_value_error_not_tuple(self, dataset_reader):

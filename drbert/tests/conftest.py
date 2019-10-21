@@ -9,9 +9,10 @@ from ..data.dataset_readers import DocumentClassificationDatasetReader
 from ..data.dataset_readers import NLIDatasetReader
 from ..data.dataset_readers import RelationClassificationDatasetReader
 from ..data.dataset_readers import SequenceLabellingDatasetReader
-from ..heads import DocumentClassificationHead
-from ..heads import SequenceClassificationHead
-from ..heads import SequenceLabellingHead
+from ..modules.heads import DocumentClassificationHead
+from ..modules.heads import SequenceClassificationHead
+from ..modules.heads import SequenceLabellingHead
+from ..modules.proportional_batch_sampler import ProportionalBatchSampler
 
 
 @pytest.fixture
@@ -33,12 +34,44 @@ def bert_config():
 
 
 @pytest.fixture
-def bert(bert_config):
+def bert_model(bert_config):
     """Pre-trained BERT model.
     """
     bert = BertModel(bert_config)
 
     return bert
+
+
+@pytest.fixture
+def tasks():
+    tasks = [
+        {
+            'name': 'snli_1.0',
+            'task': 'nli',
+            'path': resource_filename(__name__, 'resources/snli_1.0'),
+            'partitions': {
+                'train':      'snli_1.0_train',
+                'validation': 'snli_1.0_dev',
+                'test':       'snli_1.0_test',
+            },
+            'batch_sizes': (16, 32, 32),
+            'lower': True,
+        },
+        {
+            'name': 'ChemProt',
+            'task': 'relation_classification',
+            'path': resource_filename(__name__, 'resources/ChemProt'),
+            'partitions': {
+                'train':      'train.tsv',
+                'validation': 'dev.tsv',
+                'test':       'test.tsv',
+            },
+            'batch_sizes': (16, 16, 16),
+            'lower': True,
+        }
+    ]
+
+    return tasks
 
 
 @pytest.fixture
@@ -180,3 +213,8 @@ def nli_dataset_reader(bert_tokenizer):
     dataset_reader = NLIDatasetReader(**args)
 
     return args, dataset_reader
+
+
+@pytest.fixture
+def batch_sampler(tasks):
+    return ProportionalBatchSampler(tasks, partition='train')
