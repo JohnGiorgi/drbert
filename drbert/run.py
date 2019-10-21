@@ -13,10 +13,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import argparse
 import glob
 import logging
@@ -32,15 +28,14 @@ from transformers.modeling_utils import WEIGHTS_NAME
 
 from tensorboardX import SummaryWriter
 
-from .constants import DEID_LABELS
-from .data.dataset_readers import DocumentClassificationDatasetReader
 from .data.dataset_readers import NLIDatasetReader
 from .data.dataset_readers import RelationClassificationDatasetReader
 from .data.dataset_readers import SequenceLabellingDatasetReader
-from .eval import evaluate
+from .evaluation.eval import evaluate
 from .model import DrBERT
-from .utils import train_utils
-from .proportional_batch_sampler import ProportionalBatchSampler
+from .modules.proportional_batch_sampler import ProportionalBatchSampler
+from .training.util import generate_inputs
+from .training.util import prepare_optimizer_and_scheduler
 
 logger = logging.getLogger(__name__)
 
@@ -53,13 +48,14 @@ def set_seed(args):
         torch.cuda.manual_seed_all(args.seed)
 
 
-def train(args, model, tokenizer):
+def train(args, tasks, model, tokenizer):
     """Coordinates training of DrBERT.
 
     Args:
         args (ArgumentParser): Object containing objects parsed from the command line.
-        model (nn.Module): The DrBERT model to train.
-        tokenizer (BertTokenizer): A transformers tokenizer object.
+        tasks (list): A list of dictionaries containing information about each task to train.
+        model (model.DrBERT): The DrBERT model to train.
+        tokenizer (PretrainedTokenizer): A transformers tokenizer object.
 
     Raises:
         ImportError if args.fp16 but Apex is not installed.
@@ -67,65 +63,31 @@ def train(args, model, tokenizer):
     if args.local_rank in [-1, 0]:
         tb_writer = SummaryWriter()
 
-    # TODO (John): Hardcoded, but an example of what the JSON will look like
-    tasks = [
-        {
-            'name': 'MedNLI',
-            'task': 'nli',
-            'path': args.dataset_folder,
-            'partitions': {
-                'train': 'mli_train_v1.jsonl',
-                'validation': 'mli_dev_v1.jsonl',
-                'test': 'mli_test_v1.jsonl',
-            },
-            'batch_sizes': (16, 256, 256),
-            'lower': True,
-            'num_labels': 3,
-        }
-    ]
-
-    # Load the datasets and register the classification heads based on the provided JSON config
-    for task in tasks:
-        if task['task'] == 'sequence_labelling':
-            task['iterators'] = SequenceLabellingDatasetReader(
-                tokenizer=tokenizer, device=args.device, **task
-            ).textual_to_iterator()
-        elif task['task'] == 'relation_classification':
-            task['iterators'] = RelationClassificationDatasetReader(
-                tokenizer=tokenizer, device=args.device, **task
-            ).textual_to_iterator()
-        elif task['task'] == 'document_classification':
-            raise NotImplementedError('Document classification is not yet implemented.')
-        elif task['task'] == 'nli':
-            task['iterators'] = NLIDatasetReader(
-                tokenizer=tokenizer, device=args.device, **task
-            ).textual_to_iterator()
-
-        model.register_classification_head(
-            name=task['name'], task=task['task'], num_labels=task['num_labels']
-        )
+    # TODO (John): Commenting this out until we add back in the per_gpu_* args
+    # args.train_batch_size = args.per_gpu_train_batch_size * max(1, args.n_gpu)
 
     # The number of batches / examples is the sum of the number of batches / examples from all tasks
-    # TODO (John): How to get this from torchtext iterator?
-    # num_examples = sum([len(task['iterators'][0].dataset) for task in tasks])
+    num_examples = sum([len(task['iterators']['train'].dataset.examples) for task in tasks])
     num_batches = sum([len(task['iterators']['train']) for task in tasks])
 
     if args.max_steps > 0:
         t_total = args.max_steps
-        args.num_train_epochs = args.max_steps // num_batches
+        args.num_train_epochs = args.max_steps // num_batches + 1
     else:
         t_total = num_batches * args.num_train_epochs
 
     # Prepare optimizer and schedule (linear warmup and decay)
-    optimizer, scheduler = train_utils.prepare_optimizer_and_scheduler(args, model, t_total)
+    optimizer, scheduler = prepare_optimizer_and_scheduler(args, model, t_total)
 
     if args.fp16:
         try:
             from apex import amp
         except ImportError:
-            raise ImportError(('Please install apex from https://www.github.com/nvidia/apex to use'
-                               ' fp16 training.'))
-        model, optimizer = amp.initialize(model, optimizer, opt_level=args.fp16_opt_level)
+            err_msg = ('Please install apex from https://www.github.com/nvidia/apex to use'
+                       ' fp16 training.')
+            logger.error('ImportError: %s', err_msg)
+            raise ImportError(err_msg)
+        model, optimizer = amp.initialize(model.to(args.device), optimizer, opt_level=args.fp16_opt_level)
 
     # Multi-gpu training (should be after apex fp16 initialization)
     if args.n_gpu > 1:
@@ -139,12 +101,8 @@ def train(args, model, tokenizer):
 
     # Train
     logger.info("***** Running training *****")
-    # TODO (John): How to get # of examples from torchtext iterators?
-    # logger.info("  Num Examples = %d", num_examples)
+    logger.info(f"  Num Examples = {num_examples}")
     logger.info(f"  Num Epochs = {args.num_train_epochs}")
-    total_train_bs = \
-        args.train_batch_size * torch.distributed.get_world_size() if args.local_rank != -1 else 1
-    logger.info(f"  Total train batch size (w. parallel, distributed) = {total_train_bs}")
     logger.info(f"  Total optimization steps = {t_total}")
 
     task_step = {task['name']: 0 for task in tasks}
@@ -160,10 +118,10 @@ def train(args, model, tokenizer):
 
     set_seed(args)  # Added here for reproductibility (even between python 2 and 3)
 
-    for _, _ in enumerate(train_iterator):
+    for _ in train_iterator:
         epoch_iterator = trange(num_batches,
-                                unit="batch",
                                 desc="Iteration",
+                                unit="batch",
                                 disable=args.local_rank not in [-1, 0],
                                 dynamic_ncols=True)
 
@@ -173,26 +131,11 @@ def train(args, model, tokenizer):
             model.train()
 
             # Training order of tasks is chosen using proportional sampling
-            name, batch = batch_sampler.get_batch()
+            name, task, batch = batch_sampler.get_batch()
 
-            # Generate inputs based on the task
-            if task['task'] == 'document_classification':
-                raise NotImplementedError('Document classification is not yet implemented.')
-            elif task['task'] == 'nli':
-                input_ids = torch.cat((batch.premise, batch.hypothesis[:, 1:]), dim=-1)
-                inputs = {'input_ids': input_ids, 'labels': batch.label, 'name': name}
-            else:
-                inputs = {'input_ids': batch.text, 'labels': batch.label, 'name': name}
-
-            # Generate attention masks on the fly
-            inputs['attention_mask'] = torch.where(
-                inputs['input_ids'] == tokenizer.pad_token_id,
-                torch.zeros_like(inputs['input_ids']),
-                torch.ones_like(inputs['input_ids'])
-             )
+            inputs = generate_inputs(name, task, batch, tokenizer)
 
             outputs = model(**inputs)
-
             loss = outputs[0]  # outputs are always tuple in transformers (see doc)
 
             if args.n_gpu > 1:
@@ -215,22 +158,16 @@ def train(args, model, tokenizer):
             task_step[name] += 1
 
             # Log metrics
-            if args.local_rank in [-1, 0] and args.logging_steps > 0 and step % args.logging_steps == 0:
+            if args.local_rank in [-1, 0] and args.logging_steps > 0 and (step + 1) % args.logging_steps == 0:
                 # Only evaluate when single GPU otherwise metrics may not average well
                 if args.local_rank == -1 and args.evaluate_during_training:
-                    results = {}
-                    # TODO (John): This needs to be updated for new setup
-                    '''
-                    for task in tasks:
-                        name, task, iterator = task.values()
-                        results[name] = evaluate(args, model, tasks)
+                    results = evaluate(tasks, model, tokenizer, partitions=['validation', 'test'])
 
+                    '''
                     # HACK (John): This is a temporary. Need a more principled API for
                     # saving results to disk.
-                    eval_utils.save_eval_to_disk(args, step, **results)
-                    '''
+                    evaluating.util.save_eval_to_disk(args, step, **results)
 
-                    ''' TODO
                     for key, value in deid_results.items():
                         tb_writer.add_scalar('deid_eval_{}'.format(key), value, global_step)
                     for key, value in cohort_results.items():
@@ -243,19 +180,22 @@ def train(args, model, tokenizer):
                 logging_loss[name] = tr_loss[name]
 
             # Save model checkpoint
-            if args.local_rank in [-1, 0] and args.save_steps > 0 and step % args.save_steps == 0:
-                output_dir = os.path.join(args.output_dir, 'checkpoint-{}'.format(step))
+            if args.local_rank in [-1, 0] and args.save_steps > 0 and step + 1 % args.save_steps == 0:
+                output_dir = os.path.join(args.output_dir, 'checkpoint-{}'.format(step + 1))
                 if not os.path.exists(output_dir):
                     os.makedirs(output_dir)
-                model_to_save = model.module if hasattr(model, 'module') else model  # Take care of distributed/parallel training
+                # Take care of distributed/parallel training
+                model_to_save = model.module if hasattr(model, 'module') else model
                 model_to_save.save_pretrained(output_dir)
                 torch.save(args, os.path.join(output_dir, 'training_args.bin'))
                 logger.info("Saving model checkpoint to %s", output_dir)
 
             postfix = {
-                f'{name}_loss': f'{(tr_loss[name] / task_step[name]):.6f}' for name in tr_loss
+                f'{name}_loss': f'{(tr_loss[name] / task_step[name]):.6f}'
+                # arbitrary '0' loss for tasks that haven't begun training yet
+                if task_step[name] else 0 for name in tr_loss
             }
-            postfix['total_loss'] = f'{sum([float(loss) for loss in list(postfix.values())]):.6f}'
+            postfix['total_loss'] = f'{sum([float(loss) for loss in list(postfix.values())]):.6f}' 
 
             epoch_iterator.set_postfix(postfix)
 
@@ -295,10 +235,6 @@ def main():
                         help="Pretrained config name or path if not the same as model_name.")
     parser.add_argument("--tokenizer_name", default="", type=str,
                         help="Pretrained tokenizer name or path if not the same as model_name.")
-    parser.add_argument("--max_seq_length", default=256, type=int,
-                        help=("The maximum total input sequence length after WordPiece"
-                              " tokenization. Sequences longer than this will be truncated, and"
-                              " sequences shorter than this will be padded."))
     parser.add_argument("--do_train", action='store_true',
                         help="Whether to run training.")
     parser.add_argument("--do_eval", action='store_true',
@@ -357,12 +293,17 @@ def main():
                         help="Can be used for distant debugging.")
     args = parser.parse_args()
 
-    if os.path.exists(args.output_dir) and os.listdir(args.output_dir) and args.do_train and not args.overwrite_output_dir:
-        raise ValueError("Output directory ({}) already exists and is not empty. Use --overwrite_output_dir to overcome.".format(args.output_dir))
+    if (os.path.exists(args.output_dir) and os.listdir(args.output_dir) and args.do_train
+       and not args.overwrite_output_dir):
+        err_msg = (f"Output directory ({args.overwrite_output_dir}) already exists and is not empty"
+                   " . Use --overwrite_output_dir to overcome.")
+        logger.error('ValueError: %s', err_msg)
+        raise ValueError(err_msg)
 
     # Setup distant debugging if needed
     if args.server_ip and args.server_port:
-        # Distant debugging - see https://code.visualstudio.com/docs/python/debugging#_attach-to-a-local-script
+        # Distant debugging
+        # See: https://code.visualstudio.com/docs/python/debugging#_attach-to-a-local-script
         import ptvsd
         print("Waiting for debugger attach")
         ptvsd.enable_attach(address=(args.server_ip, args.server_port), redirect_output=True)
@@ -407,6 +348,60 @@ def main():
         config=config
     )
 
+    model.to(args.device)
+
+    # TODO (John): Hardcoded, but an example of what the JSON will look like
+    tasks = [
+        {
+            'name': 'MedNLI',
+            'task': 'nli',
+            'path': '/home/johnmg/projects/def-gbader/johnmg/drbert/datasets/mednli/1.0.0',
+            'partitions': {
+                'train': 'mli_train_v1.jsonl',
+                'validation': 'mli_dev_v1.jsonl',
+                'test': 'mli_test_v1.jsonl',
+            },
+            'batch_sizes': (16, 32, 32),
+            'lower': True,
+        },
+        {
+            'name': 'i2b2_2010_relations',
+            'task': 'relation_classification',
+            'path': '/home/johnmg/projects/def-gbader/johnmg/drbert/datasets/i2b2_2010_relations',
+            'partitions': {
+                'train': 'train.tsv',
+                'validation': 'dev.tsv',
+                'test': 'test.tsv',
+            },
+            'batch_sizes': (16, 16, 16),
+            'lower': True,
+        }
+    ]
+
+    # Load the datasets and register the classification heads based on the provided JSON config
+    for task in tasks:
+        if task['task'] == 'sequence_labelling':
+            task['iterators'] = SequenceLabellingDatasetReader(
+                tokenizer=tokenizer, device=args.device, **task
+            ).textual_to_iterator()
+        elif task['task'] == 'relation_classification':
+            task['iterators'] = RelationClassificationDatasetReader(
+                tokenizer=tokenizer, device=args.device, **task
+            ).textual_to_iterator()
+        elif task['task'] == 'document_classification':
+            err_msg = 'Document classification is not yet implemented.'
+            logger.error('NotImplementedError: %s', err_msg)
+            raise NotImplementedError(err_msg)
+        elif task['task'] == 'nli':
+            task['iterators'] = NLIDatasetReader(
+                tokenizer=tokenizer, device=args.device, **task
+            ).textual_to_iterator()
+
+        # TODO (John): This is going to cause issues with sequence labelling b/c of CLS, PAD and
+        # SEP tokens.
+        num_labels = len(task['iterators']['train'].dataset.fields['label'].vocab)
+        model.register_classification_head(task['name'], task=task['task'], num_labels=num_labels)
+
     if args.local_rank == 0:
         # Make sure only the first process in distributed training will download model & vocab
         torch.distributed.barrier()
@@ -415,9 +410,23 @@ def main():
 
     logger.info("Training/evaluation parameters %s", args)
 
+    # Before we do anything with models, we want to ensure that we get fp16 execution of
+    # torch.einsum if args.fp16 is set. Otherwise it'll default to "promote" mode, and we'll get
+    # fp32 operations. Note that running `--fp16_opt_level="O2"` will remove the need for this code,
+    # but it is still valid.
+    if args.fp16:
+        try:
+            import apex
+            apex.amp.register_half_function(torch, 'einsum')
+        except ImportError:
+            err_msg = ("Please install apex from https://www.github.com/nvidia/apex to use fp16"
+                       " training.")
+            logger.error('ImportError: %s', err_msg)
+            raise ImportError(err_msg)
+
     # Training
     if args.do_train:
-        global_step, tr_loss = train(args, model, tokenizer)
+        global_step, tr_loss = train(args, tasks, model, tokenizer)
         logger.info(" global_step = %s, average loss = %s", global_step, tr_loss)
 
     # Save the trained model and the tokenizer
@@ -473,7 +482,7 @@ def main():
             model.to(args.device)
 
             # Evaluate
-            result = evaluate(args, model, tokenizer, prefix=global_step)
+            result = evaluate(model, tokenizer, prefix=global_step)
 
             result = {(k + ('_{}'.format(global_step) if global_step else ''), v)
                       for k, v in result.items()}
