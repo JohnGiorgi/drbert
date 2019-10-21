@@ -42,31 +42,28 @@ The expected way to interact with `DrBERT` is through the `run.py` scripts.
 
 > This script is modified from the `run_*.py` scripts of the [Transformers](https://github.com/huggingface/transformers) library.
 
-DrBERT is configured using a simple JSON file. The format is as follows:
+DrBERT is configured using a simple JSON file. The format is as follows::
 
-```python
-# The config is a list of dictionary-like objects, one per task. E.g.,
-[
-    {
-        "name": "example", # A string containing a unique name for this task
-        "task": "sequence_labelling", # A task name, see drbert.constants.TASKS for **valid** names
-        "path": "path/to/dataset", # Path to the dataset for this task
-        "partitions": { # Filenames for the individual partitions of this task
-            "train": "train.tsv",
-            "validation": "valid.tsv",
-            "test": "test.tsv"
-        },
-        "batch_sizes": [16, 256, 256], # A list of batch sizes for each of the partitions
-        "lower": true, # Whether or not the data should be lowercased
-    }
-]
-```
+    [
+        {
+            "name": "example", # A string containing a unique name for this task
+            "task": "sequence_labelling", # A task name, see drbert.constants.TASKS for **valid** names
+            "path": "path/to/dataset", # Path to the dataset for this task
+            "partitions": { # Filenames for the individual partitions of this task
+                "train": "train.tsv",
+                "validation": "valid.tsv",
+                "test": "test.tsv"
+            },
+            "batch_sizes": [16, 256, 256], # A list of batch sizes for each of the partitions
+            "lower": true, # Whether or not the data should be lowercased
+        }
+    ]
 
 A user can specify an arbitrary number of tasks using this format, which will be used to train the model jointly.
 
-**To** train or evaluate the model, simply pass this configuration file to `run.py` along with any other arguments you would like to set. E.g.,
+To train or evaluate the model, simply pass this configuration file to `run.py` along with any other arguments you would like to set. E.g.,
 
-```bash
+```
 python -m drbert.run \
 --task_config path/to/tasks.json \
 --model_name_or_path bert-base-cased \
