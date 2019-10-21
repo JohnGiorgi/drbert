@@ -7,9 +7,8 @@ from transformers.modeling_bert import BertPreTrainedModel
 
 from .constants import SEQUENCE_CLASSIFICATION_TASKS
 from .constants import TASKS
-from .heads import DocumentClassificationHead
-from .heads import SequenceClassificationHead
-from .heads import SequenceLabellingHead
+from .modules.heads import SequenceClassificationHead
+from .modules.heads import SequenceLabellingHead
 
 logger = logging.getLogger(__name__)
 
@@ -61,13 +60,13 @@ class DrBERT(BertPreTrainedModel):
         Args:
             name (str): A unique name which can be used to access the classification head.
             task (str): Which type of task this classification head will perform. Must be in
-                `constants.TASKS`.
+                `drbert.constants.TASKS`.
             num_labels (int or tuple): The number of target classes for this head. Will be a tuple
                 in the case of multi-label datasets.
 
         Raises:
             ValueError: If `name` is already registered (i.e. it is in `self.classification_heads`).
-            ValueError: If `task` is not in `constants.TASKS`.
+            ValueError: If `task` is not in `drbert.constants.TASKS`.
 
         Returns:
             torch.nn.Module: The classification head created.
@@ -79,18 +78,20 @@ class DrBERT(BertPreTrainedModel):
             raise ValueError(err_msg)
         if task not in TASKS:
             err_msg = f'task must be one of {TASKS}. Got {task}'
+            logger.error('ValueError: %s', err_msg)
             raise ValueError(err_msg)
 
         if task == 'sequence_labelling':
             self.classification_heads[name] = SequenceLabellingHead(self.config, num_labels)
         elif task == 'document_classification':
+            err_msg = 'Document classification is not yet implemented.'
+            logger.error('ValueError: %s', err_msg)
             raise NotImplementedError('Document classification is not yet implemented.')
         elif task in SEQUENCE_CLASSIFICATION_TASKS:
             self.classification_heads[name] = SequenceClassificationHead(self.config, num_labels)
 
         # HACK (John): This assumes all params on same device. Is there a better way to do this?
         # Place the head on the same device as its parent model
-        device = next(self.parameters()).device
-        self.classification_heads[name] = self.classification_heads[name].to(device)
+        self.classification_heads[name].to(next(self.parameters()).device)
 
         return self.classification_heads[name]

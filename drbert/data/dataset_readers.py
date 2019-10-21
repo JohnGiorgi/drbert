@@ -1,10 +1,13 @@
 import json
+import logging
 import os
 
 from torchtext import data
 from torchtext import datasets
 
 from ..constants import PARTITIONS
+
+logger = logging.getLogger(__name__)
 
 
 class DatasetReader(object):
@@ -35,22 +38,30 @@ class DatasetReader(object):
         ValueError: If batch_sizes is not a tuple or None.
         ValueError: If batch_sizes is not None and `len(batch_sizes) != len(partitions)`.
         ValueError: If 'train' not `partitions`.
-        ValueError: If any key in `partitions` is not in `PARTITIONS`.
+        ValueError: If any key in `partitions` is not in `drbert.constants.PARTITIONS`.
     """
     def __init__(self, path, partitions, tokenizer, format, skip_header=False,
                  batch_sizes=None, lower=False, sort_key=None, device='cpu'):
         if batch_sizes is not None:
             if not isinstance(batch_sizes, tuple):
-                raise ValueError(f"'batch_sizes' must be a tuple. Got: {batch_sizes}")
+                err_msg = f"'batch_sizes' must be a tuple. Got: {batch_sizes}"
+                logger.error('ValueError: %s', err_msg)
+                raise ValueError(err_msg)
             if len(partitions) != len(batch_sizes):
-                raise ValueError(f"(len(batch_sizes) ({len(batch_sizes)}) must equal the number of"
-                                 f" partitions ({len(partitions)})")
+                err_msg = (f"(len(batch_sizes) ({len(batch_sizes)}) must equal the number of"
+                           f" partitions ({len(partitions)})")
+                logger.error('ValueError: %s', err_msg)
+                raise ValueError(err_msg)
         if 'train' not in partitions:
-            raise ValueError(f'"train" must be a key in "partitions". Got keys: {partitions.keys()}')
+            err_msg = f'"train" must be a key in "partitions". Got keys: {partitions.keys()}'
+            logger.error('ValueError: %s', err_msg)
+            raise ValueError(err_msg)
         for partition in partitions:
-            if partition not in {'train', 'validation', 'test'}:
-                raise ValueError((f"Found invalid key ({partition}) in partitions. All keys must be"
-                                  f" one of {PARTITIONS}"))
+            if partition not in PARTITIONS:
+                err_msg = (f"Found invalid key ({partition}) in partitions. All keys must be"
+                           f" one of {PARTITIONS}")
+                logger.error('ValueError: %s', err_msg)
+                raise ValueError(err_msg)
 
         self.path = path
         self.partitions = partitions
@@ -417,7 +428,11 @@ class NLIDatasetReader(DatasetReader):
 
     E.g.,
 
-    {"gold_label": "entailment", "sentence1": "Children smiling and waving at camera", "sentence2": "There are children present"}
+    {
+        "gold_label": "entailment",
+        "sentence1": "Children smiling and waving at camera",
+        "sentence2": "There are children present"
+    }
 
     Example usage:
         >>> from transformers import AutoTokenizer
