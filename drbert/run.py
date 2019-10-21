@@ -15,6 +15,7 @@
 # limitations under the License.
 import argparse
 import glob
+import json
 import logging
 import os
 import random
@@ -31,6 +32,7 @@ from tensorboardX import SummaryWriter
 from .data.dataset_readers import NLIDatasetReader
 from .data.dataset_readers import RelationClassificationDatasetReader
 from .data.dataset_readers import SequenceLabellingDatasetReader
+from .data.util import batch_sizes_to_tuple
 from .evaluation.eval import evaluate
 from .model import DrBERT
 from .modules.proportional_batch_sampler import ProportionalBatchSampler
@@ -195,7 +197,7 @@ def train(args, tasks, model, tokenizer):
                 # arbitrary '0' loss for tasks that haven't begun training yet
                 if task_step[name] else 0 for name in tr_loss
             }
-            postfix['total_loss'] = f'{sum([float(loss) for loss in list(postfix.values())]):.6f}' 
+            postfix['total_loss'] = f'{sum([float(loss) for loss in list(postfix.values())]):.6f}'
 
             epoch_iterator.set_postfix(postfix)
 
@@ -222,8 +224,11 @@ def main():
     parser = argparse.ArgumentParser()
 
     # Required parameters
-    parser.add_argument("--dataset_folder", default=None, type=str, required=True,
-                        help="De-id and co-hort identification data directory.")
+    # TODO (John): Add this functionality back in. Right now, everything is hardcoded to BERT.
+    # parser.add_argument("--model_type", default=None, type=str, required=True,
+    #                     help="Model type selected in the list: " + ", ".join(MODEL_CLASSES.keys()))
+    parser.add_argument("--task_config", default=None, type=str, required=True,
+                        help="Path to the task configuration file used to build the DrBERT model.")
     parser.add_argument("--model_name_or_path", default=None, type=str, required=True,
                         help="Path to pre-trained model or shortcut name.")
     parser.add_argument("--output_dir", default=None, type=str, required=True,
@@ -232,24 +237,29 @@ def main():
 
     # Other parameters
     parser.add_argument("--config_name", default="", type=str,
-                        help="Pretrained config name or path if not the same as model_name.")
+                        help=("Pretrained Transformers config name or path if not the same as"
+                              " model_name."))
     parser.add_argument("--tokenizer_name", default="", type=str,
                         help="Pretrained tokenizer name or path if not the same as model_name.")
+    parser.add_argument("--cache_dir", default="", type=str,
+                        help="Where do you want to store the pre-trained models downloaded from s3")
     parser.add_argument("--do_train", action='store_true',
                         help="Whether to run training.")
     parser.add_argument("--do_eval", action='store_true',
                         help="Whether to run eval on the dev set.")
     parser.add_argument("--evaluate_during_training", action='store_true',
                         help="Run evaluation during training at each logging step.")
+
+    # TODO (John): These should all override task_config
     parser.add_argument("--do_lower_case", action='store_true',
                         help="Set this flag if you are using an uncased model.")
-
     parser.add_argument("--train_batch_size", default=16, type=int,
                         help="Total batch size to use while training.")
     parser.add_argument("--eval_batch_size", default=128, type=int,
                         help="Total batch size to use while evaluating.")
     parser.add_argument("--learning_rate", default=2e-5, type=float,
                         help="The initial learning rate for Adam.")
+
     parser.add_argument("--weight_decay", default=0.01, type=float,
                         help="Weight decay if we apply some.")
     parser.add_argument("--adam_epsilon", default=1e-6, type=float,
@@ -267,9 +277,9 @@ def main():
                         help="If true, all of the warnings related to data processing will be printed. "
                              "A number of warnings are expected for a normal evaluation.")
 
-    parser.add_argument('--logging_steps', type=int, default=1000,
+    parser.add_argument('--logging_steps', type=int, default=50,
                         help="Log every X updates steps.")
-    parser.add_argument('--save_steps', type=int, default=1000,
+    parser.add_argument('--save_steps', type=int, default=50,
                         help="Save checkpoint every X updates steps.")
     parser.add_argument("--eval_all_checkpoints", action='store_true',
                         help="Evaluate all checkpoints starting with the same prefix as model_name ending and ending with step number")
@@ -350,33 +360,9 @@ def main():
 
     model.to(args.device)
 
-    # TODO (John): Hardcoded, but an example of what the JSON will look like
-    tasks = [
-        {
-            'name': 'MedNLI',
-            'task': 'nli',
-            'path': '/home/johnmg/projects/def-gbader/johnmg/drbert/datasets/mednli/1.0.0',
-            'partitions': {
-                'train': 'mli_train_v1.jsonl',
-                'validation': 'mli_dev_v1.jsonl',
-                'test': 'mli_test_v1.jsonl',
-            },
-            'batch_sizes': (16, 32, 32),
-            'lower': True,
-        },
-        {
-            'name': 'i2b2_2010_relations',
-            'task': 'relation_classification',
-            'path': '/home/johnmg/projects/def-gbader/johnmg/drbert/datasets/i2b2_2010_relations',
-            'partitions': {
-                'train': 'train.tsv',
-                'validation': 'dev.tsv',
-                'test': 'test.tsv',
-            },
-            'batch_sizes': (16, 16, 16),
-            'lower': True,
-        }
-    ]
+    # Load the task config
+    with open(args.task_config, 'r') as f:
+        tasks = json.load(f, object_hook=batch_sizes_to_tuple)
 
     # Load the datasets and register the classification heads based on the provided JSON config
     for task in tasks:
