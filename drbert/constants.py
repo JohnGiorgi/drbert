@@ -8,8 +8,10 @@ BERT_MAX_SENT_LEN = 512
 
 PARTITIONS = {'train', 'validation', 'test'}
 
-TASKS = {'sequence_labelling', 'relation_classification', 'document_classification', 'nli'}
-SEQUENCE_CLASSIFICATION_TASKS = {'relation_classification', 'nli'}
+# A set of all valid task names. Additional subsets are simply for convience
+TASKS = {'sequence_labelling', 'relation_classification', 'document_classification', 'nli', 'sts'}
+SEQUENCE_CLASSIFICATION_TASKS = {'relation_classification', 'nli', 'sts'}
+REGRESSION_TASKS = {'sts'}
 
 
 DEID_TYPES = [

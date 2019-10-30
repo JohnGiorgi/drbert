@@ -1,12 +1,15 @@
 import logging
 
 import torch
+from scipy.stats import pearsonr
 from sklearn.metrics import precision_recall_fscore_support
+from sklearn.metrics import accuracy_score
 from tqdm import tqdm
 
 from ..constants import OUTSIDE
 from ..constants import SEQUENCE_CLASSIFICATION_TASKS
 from ..constants import TASKS
+from ..constants import REGRESSION_TASKS
 from ..training.util import generate_inputs
 from .util import precision_recall_f1_support_sequence_labelling
 from .util import print_evaluation
@@ -49,7 +52,7 @@ def evaluate(tasks, model, tokenizer, partitions=None):
 
             y_true, y_pred = [], []
             if task['task'] == 'sequence_labelling':
-                orig_tok_mask = []
+                orig_tok_mask, attention_mask = [], []
 
             eval_iterator = tqdm(
                 task['iterators'][partition], desc="Evaluating", unit='batch', dynamic_ncols=True
@@ -61,37 +64,53 @@ def evaluate(tasks, model, tokenizer, partitions=None):
                 outputs = model(**inputs)
                 loss, logits = outputs[:2]
 
-                y_true.extend(batch.label.tolist())
-                y_pred.extend(torch.argmax(logits, dim=-1).tolist())
+                y_true.extend(batch.label.view(-1).tolist())
+
+                # Don't argmax if performing a regression task
+                if task['task'] in REGRESSION_TASKS:
+                    y_pred.extend(logits.view(-1).tolist())
+                else:
+                    y_pred.extend(torch.argmax(logits, dim=-1).view(-1).tolist())
 
                 if task['task'] == 'sequence_labelling':
-                    orig_tok_mask.extend(batch.mask.tolist())
+                    orig_tok_mask.extend(batch.mask.view(-1).tolist())
+                    attention_mask.extend(inputs['attention_mask'].view(-1).tolist())
 
                 del batch, inputs, outputs, loss, logits
 
-            idx_to_label = \
-                reverse_dict(task['iterators'][partition].dataset.fields['label'].vocab.stoi)
+            eval_iterator.close()
 
+            # Classification tasks need reverse mapping from idx to label
+            if task['task'] not in REGRESSION_TASKS:
+                idx_to_label = \
+                    reverse_dict(task['iterators'][partition].dataset.fields['label'].vocab.stoi)
+
+            # Certain tasks contain specific eval functions, others are grouped more broadly
             if task['task'] == 'sequence_labelling':
-                scores = evaluate_sequence_labelling(y_true, y_pred, idx_to_label)
-            elif task['task'] in SEQUENCE_CLASSIFICATION_TASKS:
-                scores = evaluate_sequence_classification(y_true, y_pred, idx_to_label)
+                scores = evaluate_sequence_labelling(
+                    y_true, y_pred, idx_to_label, orig_tok_mask, attention_mask
+                )
             elif task['task'] == 'document_classification':
                 err_msg = 'Document classification is not yet implemented.'
                 logger.error('NotImplementedError: %s', err_msg)
                 raise NotImplementedError('Document classification is not yet implemented.')
+            elif task['task'] in REGRESSION_TASKS:
+                scores = evaluate_regression_tasks(y_true, y_pred)
+            elif task['task'] in SEQUENCE_CLASSIFICATION_TASKS:
+                scores = evaluate_sequence_classification(y_true, y_pred, idx_to_label)
             else:
                 err_msg = f"'task' must be one of {TASKS}. Got '{task}'."
                 logger.error('ValueError: %s', err_msg)
                 raise ValueError(err_msg)
 
             results[task['name']][partition] = scores
-            print_evaluation(scores, title=task['name'])
+            if task['task'] != 'sts':
+                print_evaluation(scores, title=task['name'])
 
     return results
 
 
-def evaluate_sequence_labelling(y_true, y_pred, idx_to_label, orig_tok_mask):
+def evaluate_sequence_labelling(y_true, y_pred, idx_to_label, orig_tok_mask, attention_mask):
     """Performs evaluation for sequence labelling tasks.
 
     Args:
@@ -105,9 +124,9 @@ def evaluate_sequence_labelling(y_true, y_pred, idx_to_label, orig_tok_mask):
             containing precision, recall, f1 and support. Additionally includes the keys
             'macro avg' and 'micro avg' containing the macro and micro averages across scores.
     """
-    # TODO (John): This is going to throw and error (I think) when it hits the pads.
-    y_true = torch.masked_select(torch.as_tensor(y_true), torch.as_tensor(orig_tok_mask)).tolist()
-    y_pred = torch.masked_select(torch.as_tensor(y_pred), torch.as_tensor(orig_tok_mask)).tolist()
+    mask = torch.eq(torch.as_tensor(orig_tok_mask), torch.as_tensor(attention_mask))
+    y_true = torch.masked_select(torch.as_tensor(y_true), mask).tolist()
+    y_pred = torch.masked_select(torch.as_tensor(y_pred), mask).tolist()
 
     # Map predicted indices to labels
     y_true = [idx_to_label[idx] for idx in y_true]
@@ -167,6 +186,10 @@ def evaluate_sequence_classification(y_true, y_pred, idx_to_label):
     scores['macro avg'] = macro_precision, macro_recall, macro_f1, total_support
     scores['micro avg'] = micro_precision, micro_recall, micro_f1, total_support
 
+    # HACK
+    acc = accuracy_score(y_true, y_pred)
+    scores['acc'] = acc, acc, acc, total_support
+
     return scores
 
 
@@ -221,5 +244,25 @@ def evaluate_document_classification(y_true, y_pred, idx_to_label):
         average_f1 /= len(disease_scores)
 
         scores[avg_type]['avg'] = (avg_precision, average_recall, average_f1, None)
+
+    return scores
+
+
+def evaluate_regression_tasks(y_true, y_pred):
+    """Performs evaluation for regression tasks (e.g. semantic text similarity).
+
+    Args:
+        y_true (list): A list containing the gold labels for each example.
+        y_pred (list): A list containing the predicted labels for each example.
+
+    Returns:
+        dict: A dictionary of scores keyed by the labels in `labels` where each score is a 4-tuple
+            containing precision, recall, f1 and support. Additionally includes the keys
+            'macro avg' and 'micro avg' containing the macro and micro averages across scores.
+    """
+    scores = {}
+
+    scores['pearson'], _ = pearsonr(y_true, y_pred)
+    print(scores['pearson'])
 
     return scores

@@ -47,7 +47,7 @@ DrBERT is configured using a simple JSON file. The format is as follows::
     [
         {
             "name": "example", # A string containing a unique name for this task
-            "task": "sequence_labelling", # A task name, see drbert.constants.TASKS for **valid** names
+            "task": "sequence_labelling", # A task name, see drbert.constants.TASKS for valid names
             "path": "path/to/dataset", # Path to the dataset for this task
             "partitions": { # Filenames for the individual partitions of this task
                 "train": "train.tsv",
@@ -59,7 +59,11 @@ DrBERT is configured using a simple JSON file. The format is as follows::
         }
     ]
 
-A user can specify an arbitrary number of tasks using this format, which will be used to train the model jointly.
+A user can specify an arbitrary number of tasks using this format, which will be used to train the model jointly. For valid `"task"` values, see
+
+```python
+python -c "from drbert import TASKS; print(TASKS)"
+```
 
 To train or evaluate the model, simply pass this configuration file to `run.py` along with any other arguments you would like to set. E.g.,
 

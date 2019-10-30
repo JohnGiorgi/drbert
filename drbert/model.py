@@ -83,12 +83,12 @@ class DrBERT(BertPreTrainedModel):
 
         if task == 'sequence_labelling':
             self.classification_heads[name] = SequenceLabellingHead(self.config, num_labels)
+        elif task in SEQUENCE_CLASSIFICATION_TASKS:
+            self.classification_heads[name] = SequenceClassificationHead(self.config, num_labels)
         elif task == 'document_classification':
             err_msg = 'Document classification is not yet implemented.'
             logger.error('ValueError: %s', err_msg)
             raise NotImplementedError('Document classification is not yet implemented.')
-        elif task in SEQUENCE_CLASSIFICATION_TASKS:
-            self.classification_heads[name] = SequenceClassificationHead(self.config, num_labels)
 
         # HACK (John): This assumes all params on same device. Is there a better way to do this?
         # Place the head on the same device as its parent model

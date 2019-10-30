@@ -2,6 +2,7 @@ import json
 import logging
 import os
 
+import torch
 from torchtext import data
 from torchtext import datasets
 
@@ -12,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 class DatasetReader(object):
     """The parent class for all dataset readers. A user is mean to interact with a subclass of this
-    class (e.g. `DocumentClassificationDatasetReader`), not this class itself.
+    class (e.g. `SequenceLabellingDatasetReader`), not this class itself.
 
     Args:
         path (str): Common prefix of the splits’ file paths.
@@ -21,6 +22,9 @@ class DatasetReader(object):
         tokenizer (transformers.PreTrainedTokenizer): The function used to tokenize strings into
             sequential examples.
         format (str): Format of the data file. One of “CSV”, “TSV”, or “JSON” (case-insensitive).
+        max_len (int): An artificial maximum length to truncate tokenized sequences to; Effective
+            maximum length is always the minimum of this value (if specified) and the underlying
+            tokenizers max sequence length (`tokenizer.max_len_single_sentence`).
         skip_header (bool, pptional): Whether to skip the first line of the input file. Defaults to
             False.
         batch_sizes (tuple, optional): Tuple of batch sizes to use for the different splits, or None
@@ -40,7 +44,7 @@ class DatasetReader(object):
         ValueError: If 'train' not `partitions`.
         ValueError: If any key in `partitions` is not in `drbert.constants.PARTITIONS`.
     """
-    def __init__(self, path, partitions, tokenizer, format, skip_header=False,
+    def __init__(self, path, partitions, tokenizer, format, max_len=512, skip_header=False,
                  batch_sizes=None, lower=False, sort_key=None, device='cpu'):
         if batch_sizes is not None:
             if not isinstance(batch_sizes, tuple):
@@ -67,6 +71,14 @@ class DatasetReader(object):
         self.partitions = partitions
         self.tokenizer = tokenizer
         self.format = format
+
+        # Take into account special tokens
+        # TODO (John): In the future, it would be great if this could be determined using the
+        # provided tokenizer.
+        self.max_len = max_len
+        self.max_len_single_sentence = self.max_len - 2
+        self.max_len_sentences_pair = self.max_len - 3
+
         self.skip_header = skip_header
         self.batch_sizes = batch_sizes
         self.lower = lower
@@ -82,15 +94,17 @@ class DatasetReader(object):
             use_vocab=False,
             init_token=self.tokenizer.cls_token_id,
             eos_token=self.tokenizer.sep_token_id,
+            preprocessing=self.preprocessor,
             tokenize=self.tokenizer.encode,
             batch_first=True,
             pad_token=self.tokenizer.pad_token_id,
             unk_token=self.tokenizer.unk_token_id
         )
-        self.LABEL = data.LabelField()
+        self.LABEL = data.LabelField(batch_first=True)
 
     def textual_to_iterator(self, fields, datasets=None, **kwargs):
-        """"
+        """"Does whatever tokenization and/or processing is necessary to go from textual input to
+        iterators for training and evaluation.
 
         Args:
             fields (list or dict): If using a list, the format must be CSV or TSV, and the values of
@@ -126,16 +140,18 @@ class DatasetReader(object):
         )
 
         # Finally, build the vocab. This "numericalizes" the field.
-        self.LABEL.build_vocab(*(split.label for split in datasets_))
+        if self.LABEL.use_vocab:
+            self.LABEL.build_vocab(*(split.label for split in datasets_))
 
-        # Create dictionary of splits_ / iterators_ keyed by partition
-        iterators, datasets = {}, {}
+        # Create dictionary of iterators / datasets  keyed by partition
+        datasets, iterators = {}, {}
 
         # BucketIterator assumes the first dataset is the train partition
         datasets['train'] = datasets_[0]
         iterators['train'] = iterators_[0]
 
-        # If a validation set was provided, it will be the second item in splits_ / iterators_
+        # If only one of a validation or test set was provided, it will be the second item in
+        # splits_ / iterators_. Otherwise, the order will be: validation, test
         if 'validation' in self.partitions:
             datasets['validation'] = datasets_[1]
             iterators['validation'] = iterators_[1]
@@ -143,9 +159,13 @@ class DatasetReader(object):
                 datasets['test'] = datasets_[2]
                 iterators['test'] = iterators_[2]
         elif 'test' in self.partitions:
+            datasets['test'] = datasets_[1]
             iterators['test'] = iterators_[1]
 
         return datasets, iterators
+
+    def preprocessor(self, batch):
+        return batch[:self.max_len_single_sentence]
 
 
 class SequenceLabellingDatasetReader(DatasetReader):
@@ -198,26 +218,26 @@ class SequenceLabellingDatasetReader(DatasetReader):
         )
 
     def textual_to_iterator(self, **kwargs):
-        """Does whatever tokenization or processing is necessary to go from textual input to
+        """Does whatever tokenization and/or processing is necessary to go from textual input to
         iterators for training and evaluation for a sequence labelling dataset.
 
         Returns:
             A tuple of `torchtext.data.iterator.BucketIterator` objects, one for each partition
             is `self.partitions`.
         """
-        def preprocessor(batch):
-            return self.tokenizer.encode(batch)
-
-        self.TEXT.preprocessing = preprocessor
+        # TODO (John): Not clear why tokenizer.encode is not called on this field?
+        # This is a temporary fix, by calling it in the preprocessing function
+        self.TEXT.preprocessing = lambda x: self.preprocessor(self.tokenizer.encode(x))
 
         # Overwrite the parents LABEL field
         self.LABEL = data.Field(
             init_token=self.tokenizer.cls_token,
             eos_token=self.tokenizer.sep_token,
+            preprocessing=self.preprocessor,
             batch_first=True,
             pad_token=self.tokenizer.pad_token,
             unk_token=None,
-            is_target=True
+            is_target=True,
         )
 
         # HACK (John): Hopefully, this is temporary. This is a mask of the same length as TEXT and
@@ -227,11 +247,11 @@ class SequenceLabellingDatasetReader(DatasetReader):
             use_vocab=False,
             init_token=0,
             eos_token=0,
-            # Convert the mask to integers
-            preprocessing=lambda x: list(map(int, x)),
+            # Cast from str to int
+            preprocessing=lambda x: self.preprocessor(list(map(int, x))),
             batch_first=True,
             pad_token=0,
-            unk_token=None
+            unk_token=None,
         )
 
         fields = [('text', self.TEXT), ('label', self.LABEL), ('mask', self.MASK)]
@@ -287,8 +307,8 @@ class RelationClassificationDatasetReader(DatasetReader):
             False.
         kwargs: Remaining keyword arguments. Will be ignored.
     """
-    def __init__(self, path, partitions, tokenizer, batch_sizes=None, lower=False,
-                 device='cpu', **kwargs):
+    def __init__(self, path, partitions, tokenizer, batch_sizes=None, lower=False, device='cpu',
+                 **kwargs):
 
         super(RelationClassificationDatasetReader, self).__init__(
             path=path, partitions=partitions, tokenizer=tokenizer, format='tsv', skip_header=True,
@@ -299,7 +319,7 @@ class RelationClassificationDatasetReader(DatasetReader):
         )
 
     def textual_to_iterator(self, **kwargs):
-        """Does whatever tokenization or processing is necessary to go from textual input to
+        """Does whatever tokenization and/or processing is necessary to go from textual input to
         iterators for training and evaluation for a relation classification dataset.
 
         Args:
@@ -314,6 +334,154 @@ class RelationClassificationDatasetReader(DatasetReader):
 
         _, iterators = \
             super(RelationClassificationDatasetReader, self).textual_to_iterator(fields, **kwargs)
+
+        return iterators
+
+
+class NLIDatasetReader(DatasetReader):
+    """Reads instances from JSON lines file(s) were each line is in the following format:
+
+    {"gold_label": ENTIALMENT LABEL, "sentence1": PREMISE TEXT, "sentence2": HYPOTHESIS TEXT}
+
+    E.g.,
+
+    {
+        "gold_label": "entailment",
+        "sentence1": "Children smiling and waving at camera",
+        "sentence2": "There are children present"
+    }
+
+    Example usage:
+        >>> from transformers import AutoTokenizer
+        >>> from dataset_readers import NLIDatasetReader
+        >>> partitions={
+                'train': 'train_filename.jsonl',
+                'validation': 'valid_filename.jsonl',
+                'test': 'test_filename.jsonl',
+            }
+        >>> tokenizer = AutoTokenizer.from_pretrained('bert-base-cased')
+        >>> train_iter, valid_iter, test_iter = NLIDatasetReader(
+                path='path/to/dataset', partitions=partitions, tokenizer=tokenizer,
+                batch_sizes=(16, 256, 256)
+            ).textual_to_iterator()
+
+    Args:
+        path (str): Common prefix of the splits’ file paths.
+        partitions (dict): A dictionary keyed by partition ('train', 'validation', 'test')
+            containing the suffix to add to `path` for that partition.
+        tokenizer (transformers.PreTrainedTokenizer): The function used to tokenize strings into
+            sequential examples.
+        batch_sizes (tuple): Optional, tuple of batch sizes to use for the different splits, or None
+            to use the same batch_size for all splits. Defaults to None.
+        lower: (bool): Optional, True if text should be lower cased, False if not. Defaults to
+            False.
+        kwargs: Remaining keyword arguments. Will be ignored.
+    """
+    def __init__(self, path, partitions, tokenizer, batch_sizes=None, lower=False,
+                 device='cpu', **kwargs):
+        super(NLIDatasetReader, self).__init__(
+            path=path, partitions=partitions, tokenizer=tokenizer, format='json', skip_header=False,
+            batch_sizes=batch_sizes, lower=lower,
+            # Sort examples according to length of premise and hypothesis
+            sort_key=datasets.nli.NLIDataset.sort_key,
+            device=device
+        )
+
+    def textual_to_iterator(self, **kwargs):
+        """Does whatever tokenization and/or processing is necessary to go from textual input to
+        iterators for training and evaluation for a NLI dataset.
+
+        Args:
+            kwargs: Passed to the `data.TabularDataset.splits` and
+            `data.BucketIterator.splits` class in the parent classes method `textual_to_iterator`.
+
+        Returns:
+            A tuple of `torchtext.data.iterator.BucketIterator` objects, one for each partition
+            is `self.partitions`.
+        """
+        fields = {
+            'sentence1':  ('premise', self.TEXT),
+            'sentence2':  ('hypothesis', self.TEXT),
+            'gold_label': ('label', self.LABEL)
+        }
+
+        _, iterators = super(NLIDatasetReader, self).textual_to_iterator(fields, **kwargs)
+
+        return iterators
+
+    def preprocessor(self, batch):
+        # Sentence pairs are truncated individually, so each must be 1/2 max size of a sentence pair
+        return batch[:self.max_len_sentences_pair // 2]
+
+
+class STSDatasetReader(DatasetReader):
+    """Reads instances from a 3 columned TSV file(s) where each line is in the following format:
+
+    SENTENCE1   SENTENCE2    SIMILARITY_SCORE
+
+    E.g.,
+
+    Zyrtec 10 mg tablet 1 tablet...	cyclobenzaprine 5 mg tablet 1-2 tablets... 4
+
+    Example usage:
+        >>> from transformers import AutoTokenizer
+        >>> from dataset_readers import STSDatasetReader
+        >>> partitions={
+                'train': 'train_filename.tsv',
+                'test': 'test_filename.tsv',
+            }
+        >>> tokenizer = AutoTokenizer.from_pretrained('bert-base-cased')
+        >>> train_iter, test_iter = STSDatasetReader(
+                path='path/to/dataset', partitions=partitions, tokenizer=tokenizer,
+                batch_sizes=(16, 256)
+            ).textual_to_iterator()
+
+    Args:
+        path (str): Common prefix of the splits’ file paths.
+        partitions (dict): A dictionary keyed by partition ('train', 'validation', 'test')
+            containing the suffix to add to `path` for that partition.
+        tokenizer (transformers.PreTrainedTokenizer): The function used to tokenize strings into
+            sequential examples.
+        batch_sizes (tuple): Optional, tuple of batch sizes to use for the different splits, or None
+            to use the same batch_size for all splits. Defaults to None.
+        lower: (bool): Optional, True if text should be lower cased, False if not. Defaults to
+            False.
+        kwargs: Remaining keyword arguments. Will be ignored.
+    """
+    def __init__(self, path, partitions, tokenizer, batch_sizes=None, lower=False,
+                 device='cpu', **kwargs):
+        super(STSDatasetReader, self).__init__(
+            path=path, partitions=partitions, tokenizer=tokenizer, format='tsv', skip_header=False,
+            batch_sizes=batch_sizes, lower=lower,
+            # Sort examples according to length of sentence1 and sentence2
+            sort_key=lambda x: data.interleave_keys(len(x.sentence1), len(x.sentence2)),
+            device=device
+        )
+
+    def textual_to_iterator(self, **kwargs):
+        """Does whatever tokenization and/or processing is necessary to go from textual input to
+        iterators for training and evaluation for a NLI dataset.
+
+        Args:
+            kwargs: Passed to the `data.TabularDataset.splits` and
+            `data.BucketIterator.splits` class in the parent classes method `textual_to_iterator`.
+
+        Returns:
+            A tuple of `torchtext.data.iterator.BucketIterator` objects, one for each partition
+            is `self.partitions`.
+        """
+        # similarity scores are already continous numbers, no need to numericalize
+        self.LABEL.use_vocab = False
+        # cast similarity scores to floats (they are cast as strings)
+        self.LABEL.preprocessing = lambda x: float(x)
+        # finally, cast torch tensors to floats (defaults to long)
+        self.LABEL.dtype = torch.float
+
+        # TODO (John): How to normalize labels?
+
+        fields = [('sentence1', self.TEXT), ('sentence2', self.TEXT), ('label', self.LABEL)]
+
+        _, iterators = super(STSDatasetReader, self).textual_to_iterator(fields, **kwargs)
 
         return iterators
 
@@ -373,7 +541,7 @@ class DocumentClassificationDatasetReader(DatasetReader):
         )
 
     def textual_to_iterator(self, **kwargs):
-        """Does whatever tokenization or processing is necessary to go from textual input to
+        """Does whatever tokenization and/or processing is necessary to go from textual input to
         iterators for training and evaluation for a document classification dataset.
 
         Args:
@@ -419,78 +587,3 @@ class DocumentClassificationDatasetReader(DatasetReader):
                     fields[key] = (key, self.label)
 
         return fields
-
-
-class NLIDatasetReader(DatasetReader):
-    """Reads instances from JSON lines file(s) were each line is in the following format:
-
-    {"gold_label": ENTIALMENT LABEL, "sentence1": PREMISE TEXT, "sentence2": HYPOTHESIS TEXT}
-
-    E.g.,
-
-    {
-        "gold_label": "entailment",
-        "sentence1": "Children smiling and waving at camera",
-        "sentence2": "There are children present"
-    }
-
-    Example usage:
-        >>> from transformers import AutoTokenizer
-        >>> from dataset_readers import NLIDatasetReader
-        >>> partitions={
-                'train': 'train_filename.jsonl',
-                'validation': 'valid_filename.jsonl',
-                'test': 'test_filename.jsonl',
-            }
-        >>> tokenizer = AutoTokenizer.from_pretrained('bert-base-cased')
-        >>> train_iter, valid_iter, test_iter = NLIDatasetReader(
-                path='path/to/dataset', partitions=partitions, tokenizer=tokenizer,
-                batch_sizes=(16, 256, 256)
-            ).textual_to_iterator()
-
-    Args:
-        path (str): Common prefix of the splits’ file paths.
-        partitions (dict): A dictionary keyed by partition ('train', 'validation', 'test')
-            containing the suffix to add to `path` for that partition.
-        tokenizer (transformers.PreTrainedTokenizer): The function used to tokenize strings into
-            sequential examples.
-        batch_sizes (tuple): Optional, tuple of batch sizes to use for the different splits, or None
-            to use the same batch_size for all splits. Defaults to None.
-        lower: (bool): Optional, True if text should be lower cased, False if not. Defaults to
-            False.
-        kwargs: Remaining keyword arguments. Will be ignored.
-    """
-    def __init__(self, path, partitions, tokenizer, batch_sizes=None, lower=False,
-                 device='cpu', **kwargs):
-        super(NLIDatasetReader, self).__init__(
-            path=path, partitions=partitions, tokenizer=tokenizer, format='json', skip_header=False,
-            batch_sizes=batch_sizes, lower=lower,
-            # Sort examples according to length of premise and hypothesis
-            sort_key=datasets.nli.NLIDataset.sort_key,
-            device=device
-        )
-
-    def textual_to_iterator(self, **kwargs):
-        """Does whatever tokenization or processing is necessary to go from textual input to
-        iterators for training and evaluation for a NLI dataset.
-
-        Args:
-            kwargs: Passed to the `data.TabularDataset.splits` and
-            `data.BucketIterator.splits` class in the parent classes method `textual_to_iterator`.
-
-        Returns:
-            A tuple of `torchtext.data.iterator.BucketIterator` objects, one for each partition
-            is `self.partitions`.
-        """
-        # Premise and hypothesis will be paired, so max_len is set to 256
-        self.tokenizer.max_len = 256
-
-        fields = {
-            'sentence1':  ('premise', self.TEXT),
-            'sentence2':  ('hypothesis', self.TEXT),
-            'gold_label': ('label', self.LABEL)
-        }
-
-        _, iterators = super(NLIDatasetReader, self).textual_to_iterator(fields, **kwargs)
-
-        return iterators

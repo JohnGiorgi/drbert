@@ -196,3 +196,36 @@ class TestNLIDatasetReader(object):
         assert test_batch.premise.size(0) == 5
         assert test_batch.hypothesis.size(0) == 5
         assert len(test_batch.label) == 5
+
+
+class TestSTSDatasetReader(object):
+    def test_attributes_after_initialization(self, sts_dataset_reader):
+        args, dataset_reader = sts_dataset_reader
+
+        assert dataset_reader.path == args['path']
+        assert dataset_reader.partitions == args['partitions']
+        assert dataset_reader.tokenizer is args['tokenizer']
+        assert dataset_reader.format.lower() == 'tsv'
+        assert not dataset_reader.skip_header
+        assert dataset_reader.batch_sizes == args['batch_sizes']
+        assert dataset_reader.lower == args['lower']
+        assert dataset_reader.device == args['device']
+
+    def test_textual_to_iterator(self, sts_dataset_reader):
+        args, dataset_reader = sts_dataset_reader
+
+        iterators = dataset_reader.textual_to_iterator()
+
+        train_iter = iterators['train']
+        test_iter = iterators['test']
+
+        train_batch = next(iter(train_iter))
+        # There are only 5 examples in the test data, so bs == 5
+        assert train_batch.sentence1.size(0) == 5
+        assert train_batch.sentence2.size(0) == 5
+        assert len(train_batch.label) == 5
+
+        test_batch = next(iter(test_iter))
+        assert test_batch.sentence1.size(0) == 5
+        assert test_batch.sentence2.size(0) == 5
+        assert len(test_batch.label) == 5

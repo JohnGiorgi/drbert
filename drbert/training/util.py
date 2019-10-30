@@ -1,9 +1,14 @@
 import logging
 
 import torch
-from transformers import AdamW, WarmupLinearSchedule
+from transformers import AdamW
+from transformers import WarmupLinearSchedule
 
 from ..constants import TASKS
+from ..data.dataset_readers import NLIDatasetReader
+from ..data.dataset_readers import RelationClassificationDatasetReader
+from ..data.dataset_readers import SequenceLabellingDatasetReader
+from ..data.dataset_readers import STSDatasetReader
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +86,9 @@ def generate_inputs(name, task, batch, tokenizer):
     elif task == 'nli':
         input_ids = torch.cat((batch.premise, batch.hypothesis[:, 1:]), dim=-1)
         inputs.update({'input_ids': input_ids, 'labels': batch.label})
+    elif task == 'sts':
+        input_ids = torch.cat((batch.sentence1, batch.sentence2[:, 1:]), dim=-1)
+        inputs.update({'input_ids': input_ids, 'labels': batch.label})
     else:
         err_msg = f"'task' must be one of {TASKS}. Got '{task}'."
         logger.error('NotImplementedError: %s', err_msg)
@@ -94,3 +102,46 @@ def generate_inputs(name, task, batch, tokenizer):
     )
 
     return inputs
+
+
+def get_iterators_for_task(task, tokenizer, device='cpu'):
+    """Convience function which will return the iterators for a given `task` and `tokenizer`.
+
+    Args:
+        task (dict): A dictionary containing all information for a task neccecary to create a
+            dataset loader.
+        tokenizer (PretrainedTokenizer): A transformers tokenizer object.
+        device (str or torch.device, optional): A string or instance of torch.device specifying
+            which device the Tensors are going to be created on. If left as default, the tensors
+            will be created on cpu. Default: None.
+
+    Returns:
+        dict: A dictionary keyed by the partitions in `task['partitions']`, containing an iterator
+            for each of those partitions.
+    """
+    if task['task'] == 'sequence_labelling':
+        iterators = SequenceLabellingDatasetReader(
+            tokenizer=tokenizer, device=device, **task
+        ).textual_to_iterator()
+    elif task['task'] == 'relation_classification':
+        iterators = RelationClassificationDatasetReader(
+            tokenizer=tokenizer, device=device, **task
+        ).textual_to_iterator()
+    elif task['task'] == 'nli':
+        iterators = NLIDatasetReader(
+            tokenizer=tokenizer, device=device, **task
+        ).textual_to_iterator()
+    elif task['task'] == 'sts':
+        iterators = STSDatasetReader(
+            tokenizer=tokenizer, device=device, **task
+        ).textual_to_iterator()
+    elif task['task'] == 'document_classification':
+        err_msg = 'Document classification is not yet implemented.'
+        logger.error('NotImplementedError: %s', err_msg)
+        raise NotImplementedError(err_msg)
+    else:
+        err_msg = f''''task["name"]' must be one of {TASKS}. Got '{task}'.'''
+        logger.error('ValueError: %s', err_msg)
+        raise ValueError(err_msg)
+
+    return iterators

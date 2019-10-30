@@ -29,15 +29,13 @@ from transformers.modeling_utils import WEIGHTS_NAME
 
 from tensorboardX import SummaryWriter
 
-from .data.dataset_readers import NLIDatasetReader
-from .data.dataset_readers import RelationClassificationDatasetReader
-from .data.dataset_readers import SequenceLabellingDatasetReader
 from .data.util import batch_sizes_to_tuple
 from .evaluation.eval import evaluate
 from .model import DrBERT
 from .modules.proportional_batch_sampler import ProportionalBatchSampler
 from .training.util import generate_inputs
 from .training.util import prepare_optimizer_and_scheduler
+from .training.util import get_iterators_for_task
 
 logger = logging.getLogger(__name__)
 
@@ -129,8 +127,11 @@ def train(args, tasks, model, tokenizer):
 
         batch_sampler = ProportionalBatchSampler(tasks, 'train')
 
-        for step, _ in enumerate(epoch_iterator):
+        for _ in epoch_iterator:
             model.train()
+
+            # The global step is the total number of steps taken for each task
+            global_step = sum(list(task_step.values()))
 
             # Training order of tasks is chosen using proportional sampling
             name, task, batch = batch_sampler.get_batch()
@@ -160,10 +161,12 @@ def train(args, tasks, model, tokenizer):
             task_step[name] += 1
 
             # Log metrics
-            if args.local_rank in [-1, 0] and args.logging_steps > 0 and (step + 1) % args.logging_steps == 0:
+            log_metrics = (args.local_rank in [-1, 0] and args.logging_steps > 0 and
+                           (global_step + 1) % args.logging_steps == 0)
+            if log_metrics:
                 # Only evaluate when single GPU otherwise metrics may not average well
                 if args.local_rank == -1 and args.evaluate_during_training:
-                    results = evaluate(tasks, model, tokenizer, partitions=['validation', 'test'])
+                    results = evaluate(tasks, model, tokenizer, partitions=['test'])
 
                     '''
                     # HACK (John): This is a temporary. Need a more principled API for
@@ -175,15 +178,17 @@ def train(args, tasks, model, tokenizer):
                     for key, value in cohort_results.items():
                         tb_writer.add_scalar('cohort_eval_{}'.format(key), value, global_step)
                     '''
-                tb_writer.add_scalar('lr', scheduler.get_lr()[0], step)
+                tb_writer.add_scalar('lr', scheduler.get_lr()[0], global_step)
                 tb_writer.add_scalar(
                     f'{name}_loss', (tr_loss[name] - logging_loss[name]) / args.logging_steps, task_step[name]
                 )
                 logging_loss[name] = tr_loss[name]
 
             # Save model checkpoint
-            if args.local_rank in [-1, 0] and args.save_steps > 0 and step + 1 % args.save_steps == 0:
-                output_dir = os.path.join(args.output_dir, 'checkpoint-{}'.format(step + 1))
+            save = (args.local_rank in [-1, 0] and args.save_steps > 0 and
+                    (global_step + 1) % args.save_steps == 0)
+            if save:
+                output_dir = os.path.join(args.output_dir, 'checkpoint-{}'.format(global_step + 1))
                 if not os.path.exists(output_dir):
                     os.makedirs(output_dir)
                 # Take care of distributed/parallel training
@@ -192,22 +197,25 @@ def train(args, tasks, model, tokenizer):
                 torch.save(args, os.path.join(output_dir, 'training_args.bin'))
                 logger.info("Saving model checkpoint to %s", output_dir)
 
+            # Display per task loss in the progress bar (and total loss if > 1 tasks)
             postfix = {
                 f'{name}_loss': f'{(tr_loss[name] / task_step[name]):.6f}'
                 # arbitrary '0' loss for tasks that haven't begun training yet
                 if task_step[name] else 0 for name in tr_loss
             }
-            postfix['total_loss'] = f'{sum([float(loss) for loss in list(postfix.values())]):.6f}'
+            if len(tr_loss) > 1:
+                postfix['total_loss'] = \
+                    f'{sum([float(loss) for loss in list(postfix.values())]):.6f}'
 
             epoch_iterator.set_postfix(postfix)
 
             del batch, inputs, outputs
 
-            if args.max_steps > 0 and step > args.max_steps:
+            if args.max_steps > 0 and global_step > args.max_steps:
                 epoch_iterator.close()
                 break
 
-        if args.max_steps > 0 and step > args.max_steps:
+        if args.max_steps > 0 and global_step > args.max_steps:
             train_iterator.close()
             break
 
@@ -217,7 +225,7 @@ def train(args, tasks, model, tokenizer):
     # Compute the average loss for each task
     avg_loss = {name: loss / task_step[name] for name, loss in tr_loss.items()}
 
-    return step, avg_loss
+    return global_step, avg_loss
 
 
 def main():
@@ -366,26 +374,14 @@ def main():
 
     # Load the datasets and register the classification heads based on the provided JSON config
     for task in tasks:
-        if task['task'] == 'sequence_labelling':
-            task['iterators'] = SequenceLabellingDatasetReader(
-                tokenizer=tokenizer, device=args.device, **task
-            ).textual_to_iterator()
-        elif task['task'] == 'relation_classification':
-            task['iterators'] = RelationClassificationDatasetReader(
-                tokenizer=tokenizer, device=args.device, **task
-            ).textual_to_iterator()
-        elif task['task'] == 'document_classification':
-            err_msg = 'Document classification is not yet implemented.'
-            logger.error('NotImplementedError: %s', err_msg)
-            raise NotImplementedError(err_msg)
-        elif task['task'] == 'nli':
-            task['iterators'] = NLIDatasetReader(
-                tokenizer=tokenizer, device=args.device, **task
-            ).textual_to_iterator()
+        task['iterators'] = get_iterators_for_task(task, tokenizer, args.device)
 
-        # TODO (John): This is going to cause issues with sequence labelling b/c of CLS, PAD and
-        # SEP tokens.
-        num_labels = len(task['iterators']['train'].dataset.fields['label'].vocab)
+        if task['task'] == 'sts':
+            num_labels = 1
+        else:
+            # TODO (John): Going to cause issues with seq labelling b/c of CLS, PAD and SEP tokens.
+            num_labels = len(task['iterators']['train'].dataset.fields['label'].vocab)
+
         model.register_classification_head(task['name'], task=task['task'], num_labels=num_labels)
 
     if args.local_rank == 0:

@@ -9,6 +9,7 @@ from ..data.dataset_readers import DocumentClassificationDatasetReader
 from ..data.dataset_readers import NLIDatasetReader
 from ..data.dataset_readers import RelationClassificationDatasetReader
 from ..data.dataset_readers import SequenceLabellingDatasetReader
+from ..data.dataset_readers import STSDatasetReader
 from ..modules.heads import DocumentClassificationHead
 from ..modules.heads import SequenceClassificationHead
 from ..modules.heads import SequenceLabellingHead
@@ -211,6 +212,26 @@ def nli_dataset_reader(bert_tokenizer):
     }
 
     dataset_reader = NLIDatasetReader(**args)
+
+    return args, dataset_reader
+
+
+@pytest.fixture
+def sts_dataset_reader(bert_tokenizer):
+    """Initialized STSDatasetReader.
+    """
+    args = {
+        'path':          resource_filename(__name__, 'resources/sts_2012'),
+        'partitions':    {'train':      'train.txt',
+                          'test':       'test.txt',
+                          },
+        'tokenizer':     bert_tokenizer,
+        'batch_sizes':   (16, 256),
+        'lower':         False,
+        'device':        'cpu'
+    }
+
+    dataset_reader = STSDatasetReader(**args)
 
     return args, dataset_reader
 
