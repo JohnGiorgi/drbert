@@ -173,7 +173,6 @@ class DatasetReader(object):
         # tokenizer.encode is called, and this throws an error as int objects have no lower() method
         if self.lower:
             batch = [tok.lower() for tok in batch] if isinstance(batch, list) else batch.lower()
-        print(batch)
         return self.tokenizer.encode(batch)
 
 
@@ -235,7 +234,6 @@ class SequenceLabellingDatasetReader(DatasetReader):
         # The tokenize method is no invoked on this field we use SequenceTaggingDataset
         # So we add it manually as a preprocessing step.
         def preprocessing(batch):
-            print(batch)
             batch = self._preprocessor(self.tokenizer.encode(batch))
             return batch
         self.TEXT.preprocessing = preprocessing

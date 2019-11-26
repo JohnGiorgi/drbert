@@ -184,7 +184,6 @@ class TestSequenceClassificationHead(object):
             assert attention_weights.size() == output_shape
             for head, weights in enumerate(attention_weights):
                 if head == masked_head:
-                    print(weights, torch.zeros_like(weights))
                     assert torch.equal(weights, torch.zeros_like(weights))
                 else:
                     assert not torch.equal(weights, torch.zeros_like(weights))
