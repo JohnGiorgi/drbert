@@ -374,12 +374,11 @@ def main():
 
     # Load the datasets and register the classification heads based on the provided JSON config
     for task in tasks:
-        task['iterators'] = get_iterators_for_task(task, tokenizer, args.device)
+        task['iterators'] = get_iterators_for_task(task, tokenizer, args.do_lower_case, args.device)
 
         if task['task'] == 'sts':
             num_labels = 1
         else:
-            # TODO (John): Going to cause issues with seq labelling b/c of CLS, PAD and SEP tokens.
             num_labels = len(task['iterators']['train'].dataset.fields['label'].vocab)
 
         model.register_classification_head(task['name'], task=task['task'], num_labels=num_labels)

@@ -104,7 +104,7 @@ def generate_inputs(name, task, batch, tokenizer):
     return inputs
 
 
-def get_iterators_for_task(task, tokenizer, device='cpu'):
+def get_iterators_for_task(task, tokenizer, lower=False, device='cpu'):
     """Convience function which will return the iterators for a given `task` and `tokenizer`.
 
     Args:
@@ -119,22 +119,16 @@ def get_iterators_for_task(task, tokenizer, device='cpu'):
         dict: A dictionary keyed by the partitions in `task['partitions']`, containing an iterator
             for each of those partitions.
     """
+    inputs = {'tokenizer': tokenizer, 'lower': lower, 'device': device, **task}
+
     if task['task'] == 'sequence_labelling':
-        iterators = SequenceLabellingDatasetReader(
-            tokenizer=tokenizer, device=device, **task
-        ).textual_to_iterator()
+        iterators = SequenceLabellingDatasetReader(**inputs).textual_to_iterator()
     elif task['task'] == 'relation_classification':
-        iterators = RelationClassificationDatasetReader(
-            tokenizer=tokenizer, device=device, **task
-        ).textual_to_iterator()
+        iterators = RelationClassificationDatasetReader(**inputs).textual_to_iterator()
     elif task['task'] == 'nli':
-        iterators = NLIDatasetReader(
-            tokenizer=tokenizer, device=device, **task
-        ).textual_to_iterator()
+        iterators = NLIDatasetReader(**inputs).textual_to_iterator()
     elif task['task'] == 'sts':
-        iterators = STSDatasetReader(
-            tokenizer=tokenizer, device=device, **task
-        ).textual_to_iterator()
+        iterators = STSDatasetReader(**inputs).textual_to_iterator()
     elif task['task'] == 'document_classification':
         err_msg = 'Document classification is not yet implemented.'
         logger.error('NotImplementedError: %s', err_msg)

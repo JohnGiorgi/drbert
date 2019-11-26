@@ -2,14 +2,15 @@ import logging
 
 import torch
 from scipy.stats import pearsonr
-from sklearn.metrics import precision_recall_fscore_support
+from scipy.stats import spearmanr
 from sklearn.metrics import accuracy_score
+from sklearn.metrics import precision_recall_fscore_support
 from tqdm import tqdm
 
 from ..constants import OUTSIDE
+from ..constants import REGRESSION_TASKS
 from ..constants import SEQUENCE_CLASSIFICATION_TASKS
 from ..constants import TASKS
-from ..constants import REGRESSION_TASKS
 from ..training.util import generate_inputs
 from .util import precision_recall_f1_support_sequence_labelling
 from .util import print_evaluation
@@ -47,7 +48,7 @@ def evaluate(tasks, model, tokenizer, partitions=None):
 
         for partition in partitions:
             logger.info(f"***** Running {task['name']} evaluation on {partition} *****")
-            logger.info(f"  Num examples = {len(task['iterators'][partition])}")
+            logger.info(f"  Num examples = {len(task['iterators'][partition].dataset.examples)}")
             logger.info(f"  Batch size = {task['iterators'][partition].batch_size}")
 
             y_true, y_pred = [], []
@@ -105,7 +106,7 @@ def evaluate(tasks, model, tokenizer, partitions=None):
 
             results[task['name']][partition] = scores
             if task['task'] != 'sts':
-                print_evaluation(scores, title=task['name'])
+                print_evaluation(scores, title=f'{task["name"]} ({partition})')
 
     return results
 
@@ -122,9 +123,10 @@ def evaluate_sequence_labelling(y_true, y_pred, idx_to_label, orig_tok_mask, att
     Returns:
         dict: A dictionary of scores keyed by the labels in `labels` where each score is a 4-tuple
             containing precision, recall, f1 and support. Additionally includes the keys
-            'macro avg' and 'micro avg' containing the macro and micro averages across scores.
+            'MACRO' and 'MICRO' containing the macro and micro averages across scores.
     """
-    mask = torch.eq(torch.as_tensor(orig_tok_mask), torch.as_tensor(attention_mask))
+    # TODO (John): This can't be the best way to compute the mask
+    mask = torch.as_tensor(orig_tok_mask) + torch.as_tensor(attention_mask) > 1
     y_true = torch.masked_select(torch.as_tensor(y_true), mask).tolist()
     y_pred = torch.masked_select(torch.as_tensor(y_pred), mask).tolist()
 
@@ -134,14 +136,15 @@ def evaluate_sequence_labelling(y_true, y_pred, idx_to_label, orig_tok_mask, att
 
     scores = precision_recall_f1_support_sequence_labelling(y_true, y_pred)
 
+    # TODO (John): Move this to precision_recall_f1_support_sequence_labelling and make it an argument
     # Add binary F1 scores
     y_true_binary = \
-        [label if label == OUTSIDE else f'{label.split("-")[0]}-binary' for label in y_true]
+        [label if label == OUTSIDE else f'{label.split("-")[0]}-PHI' for label in y_true]
     y_pred_binary = \
-        [label if label == OUTSIDE else f'{label.split("-")[0]}-binary' for label in y_pred]
+        [label if label == OUTSIDE else f'{label.split("-")[0]}-PHI' for label in y_pred]
 
-    scores['binary'] = \
-        precision_recall_f1_support_sequence_labelling(y_true_binary, y_pred_binary)['binary']
+    scores['PHI'] = \
+        precision_recall_f1_support_sequence_labelling(y_true_binary, y_pred_binary)['PHI']
 
     return scores
 
@@ -157,7 +160,7 @@ def evaluate_sequence_classification(y_true, y_pred, idx_to_label):
     Returns:
         dict: A dictionary of scores keyed by the labels in `labels` where each score is a 4-tuple
             containing precision, recall, f1 and support. Additionally includes the keys
-            'macro avg' and 'micro avg' containing the macro and micro averages across scores.
+            'MACRO' and 'MICRO' containing the macro and micro averages across scores.
     """
     scores = {}
 
@@ -183,12 +186,12 @@ def evaluate_sequence_classification(y_true, y_pred, idx_to_label):
         scores[idx_to_label[label]] = precision[i], recall[i], f1[i], support[i]
         total_support += support[i]
 
-    scores['macro avg'] = macro_precision, macro_recall, macro_f1, total_support
-    scores['micro avg'] = micro_precision, micro_recall, micro_f1, total_support
+    scores['MACRO'] = macro_precision, macro_recall, macro_f1, total_support
+    scores['MICRO'] = micro_precision, micro_recall, micro_f1, total_support
 
     # HACK
     acc = accuracy_score(y_true, y_pred)
-    scores['acc'] = acc, acc, acc, total_support
+    scores['ACCURACY'] = acc, acc, acc, total_support
 
     return scores
 
@@ -204,7 +207,7 @@ def evaluate_document_classification(y_true, y_pred, idx_to_label):
     Returns:
         dict: A dictionary of scores keyed by the labels in `labels` where each score is a 4-tuple
             containing precision, recall, f1 and support. Additionally includes the keys
-            'macro avg' and 'micro avg' containing the macro and micro averages across scores.
+            'MACRO' and 'MICRO' containing the macro and micro averages across scores.
     """
     disease_dict = {key: [[], []] for key, value in idx_to_label.items()}
     scores = {'micro': {value: [] for key, value in idx_to_label.items()},
@@ -258,11 +261,14 @@ def evaluate_regression_tasks(y_true, y_pred):
     Returns:
         dict: A dictionary of scores keyed by the labels in `labels` where each score is a 4-tuple
             containing precision, recall, f1 and support. Additionally includes the keys
-            'macro avg' and 'micro avg' containing the macro and micro averages across scores.
+            'MACRO' and 'MICRO' containing the macro and micro averages across scores.
     """
     scores = {}
 
     scores['pearson'], _ = pearsonr(y_true, y_pred)
-    print(scores['pearson'])
+    scores['spearman'], _ = spearmanr(y_true, y_pred)
+
+    print(f'Pearson r: {scores["pearson"]:.2%}')
+    print(f'Spearman r: {scores["spearman"]:.2%}')
 
     return scores

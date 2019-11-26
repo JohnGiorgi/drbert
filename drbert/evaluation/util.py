@@ -31,7 +31,7 @@ def precision_recall_f1_support_sequence_labelling(y_true, y_pred):
     Returns:
         A dictionary of scores keyed by the labels in `y_true` where each score is a 4-tuple
         containing precision, recall, f1 and support. Additionally includes the keys
-        'Macro avg' and 'Micro avg' containing the macro and micro averages across scores.
+        'MACRO' and 'MICRO' containing the macro and micro averages across scores.
     """
     scores = {}
     # Unique labels, not including NEG
@@ -61,18 +61,10 @@ def precision_recall_f1_support_sequence_labelling(y_true, y_pred):
     micro_recall = recall_score(y_true, y_pred)
     micro_f1 = f1_score(y_true, y_pred)
 
-    scores['Macro avg'] = macro_precision, macro_recall, macro_f1, total_support
-    scores['Micro avg'] = micro_precision, micro_recall, micro_f1, total_support
+    scores['MACRO'] = macro_precision, macro_recall, macro_f1, total_support
+    scores['MICRO'] = micro_precision, micro_recall, micro_f1, total_support
 
     return scores
-
-
-def classification_accuracy(y_true, y_pred):
-    num_correct = 0
-    for i, _ in enumerate(y_true):
-        if y_true[i] == y_pred[i]:
-            num_correct += 1
-    return num_correct / len(y_true)
 
 
 def print_evaluation(evaluation, title=None):

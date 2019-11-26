@@ -29,8 +29,6 @@ class DatasetReader(object):
             False.
         batch_sizes (tuple, optional): Tuple of batch sizes to use for the different splits, or None
             to use the same batch_size for all splits. Defaults to None.
-        lower: (bool, optional): True if text should be lower cased, False if not. Defaults to
-            False.
         sort_key (function): A key to use for sorting examples in order to batch together examples
             with similar lengths and minimize padding. The sort_key provided to the Iterator
             constructor overrides the sort_key attribute of the Dataset, or defers to it if None.
@@ -45,7 +43,7 @@ class DatasetReader(object):
         ValueError: If any key in `partitions` is not in `drbert.constants.PARTITIONS`.
     """
     def __init__(self, path, partitions, tokenizer, format, max_len=512, skip_header=False,
-                 batch_sizes=None, lower=False, sort_key=None, device='cpu'):
+                 batch_sizes=None, sort_key=None, lower=False, device='cpu'):
         if batch_sizes is not None:
             if not isinstance(batch_sizes, tuple):
                 err_msg = f"'batch_sizes' must be a tuple. Got: {batch_sizes}"
@@ -81,8 +79,8 @@ class DatasetReader(object):
 
         self.skip_header = skip_header
         self.batch_sizes = batch_sizes
-        self.lower = lower
         self.sort_key = sort_key
+        self.lower = lower
         self.device = device
 
         # These are the default fields that can be updated by subclasses if necessary
@@ -94,7 +92,10 @@ class DatasetReader(object):
             use_vocab=False,
             init_token=self.tokenizer.cls_token_id,
             eos_token=self.tokenizer.sep_token_id,
-            preprocessing=self.preprocessor,
+            preprocessing=self._preprocessor,
+            # We can't use the lower argument of torchtext Field because the lowercasing happens
+            # after tokenizer.encode is called, and this throws an error as int objects have no
+            # lower() method. Our solution is to first call tokenizer.tokenize
             tokenize=self.tokenizer.encode,
             batch_first=True,
             pad_token=self.tokenizer.pad_token_id,
@@ -164,8 +165,16 @@ class DatasetReader(object):
 
         return datasets, iterators
 
-    def preprocessor(self, batch):
+    def _preprocessor(self, batch):
         return batch[:self.max_len_single_sentence]
+
+    def _tokenize(self, batch):
+        # We can't use the lower argument of torchtext Field because the lowercasing happens after
+        # tokenizer.encode is called, and this throws an error as int objects have no lower() method
+        if self.lower:
+            batch = [tok.lower() for tok in batch] if isinstance(batch, list) else batch.lower()
+        print(batch)
+        return self.tokenizer.encode(batch)
 
 
 class SequenceLabellingDatasetReader(DatasetReader):
@@ -185,9 +194,9 @@ class SequenceLabellingDatasetReader(DatasetReader):
         >>> from transformers import AutoTokenizer
         >>> from dataset_readers import SequenceLabellingDatasetReader
         >>> partitions={
-                'train': 'train_filename.jsonl',
-                'validation': 'valid_filename.jsonl',
-                'test': 'test_filename.jsonl',
+                'train': 'train.tsv',
+                'validation': 'valid.tsv',
+                'test': 'test.jsonl',
             }
         >>> tokenizer = AutoTokenizer.from_pretrained('bert-base-cased')
         >>> train_iter, valid_iter, test_iter = SequenceLabellingDatasetReader(
@@ -203,18 +212,16 @@ class SequenceLabellingDatasetReader(DatasetReader):
             sequential examples.
         batch_sizes (tuple): Optional, tuple of batch sizes to use for the different splits, or None
             to use the same batch_size for all splits. Defaults to None.
-        lower: (bool): Optional, True if text should be lower cased, False if not. Defaults to
-            False.
         kwargs: Remaining keyword arguments. Will be ignored.
     """
     def __init__(self, path, partitions, tokenizer, batch_sizes=None, lower=False, device='cpu',
                  **kwargs):
         super(SequenceLabellingDatasetReader, self).__init__(
             path=path, partitions=partitions, tokenizer=tokenizer, format='tsv', skip_header=False,
-            batch_sizes=batch_sizes, lower=lower,
+            batch_sizes=batch_sizes,
             # Sort examples according to length of sentences
             sort_key=datasets.SequenceTaggingDataset.sort_key,
-            device=device
+            lower=lower, device=device
         )
 
     def textual_to_iterator(self, **kwargs):
@@ -225,15 +232,19 @@ class SequenceLabellingDatasetReader(DatasetReader):
             A tuple of `torchtext.data.iterator.BucketIterator` objects, one for each partition
             is `self.partitions`.
         """
-        # TODO (John): Not clear why tokenizer.encode is not called on this field?
-        # This is a temporary fix, by calling it in the preprocessing function
-        self.TEXT.preprocessing = lambda x: self.preprocessor(self.tokenizer.encode(x))
+        # The tokenize method is no invoked on this field we use SequenceTaggingDataset
+        # So we add it manually as a preprocessing step.
+        def preprocessing(batch):
+            print(batch)
+            batch = self._preprocessor(self.tokenizer.encode(batch))
+            return batch
+        self.TEXT.preprocessing = preprocessing
 
         # Overwrite the parents LABEL field
         self.LABEL = data.Field(
             init_token=self.tokenizer.cls_token,
             eos_token=self.tokenizer.sep_token,
-            preprocessing=self.preprocessor,
+            preprocessing=self._preprocessor,
             batch_first=True,
             pad_token=self.tokenizer.pad_token,
             unk_token=None,
@@ -248,7 +259,7 @@ class SequenceLabellingDatasetReader(DatasetReader):
             init_token=0,
             eos_token=0,
             # Cast from str to int
-            preprocessing=lambda x: self.preprocessor(list(map(int, x))),
+            preprocessing=lambda x: self._preprocessor(list(map(int, x))),
             batch_first=True,
             pad_token=0,
             unk_token=None,
@@ -303,8 +314,6 @@ class RelationClassificationDatasetReader(DatasetReader):
             sequential examples.
         batch_sizes (tuple): Optional, tuple of batch sizes to use for the different splits, or None
             to use the same batch_size for all splits. Defaults to None.
-        lower: (bool): Optional, True if text should be lower cased, False if not. Defaults to
-            False.
         kwargs: Remaining keyword arguments. Will be ignored.
     """
     def __init__(self, path, partitions, tokenizer, batch_sizes=None, lower=False, device='cpu',
@@ -312,10 +321,10 @@ class RelationClassificationDatasetReader(DatasetReader):
 
         super(RelationClassificationDatasetReader, self).__init__(
             path=path, partitions=partitions, tokenizer=tokenizer, format='tsv', skip_header=True,
-            batch_sizes=batch_sizes, lower=lower,
+            batch_sizes=batch_sizes,
             # Sort examples according to length of sentences
             sort_key=lambda x: len(x.text),
-            device=device
+            lower=lower, device=device
         )
 
     def textual_to_iterator(self, **kwargs):
@@ -373,18 +382,16 @@ class NLIDatasetReader(DatasetReader):
             sequential examples.
         batch_sizes (tuple): Optional, tuple of batch sizes to use for the different splits, or None
             to use the same batch_size for all splits. Defaults to None.
-        lower: (bool): Optional, True if text should be lower cased, False if not. Defaults to
-            False.
         kwargs: Remaining keyword arguments. Will be ignored.
     """
-    def __init__(self, path, partitions, tokenizer, batch_sizes=None, lower=False,
-                 device='cpu', **kwargs):
+    def __init__(self, path, partitions, tokenizer, batch_sizes=None, lower=False, device='cpu',
+                 **kwargs):
         super(NLIDatasetReader, self).__init__(
             path=path, partitions=partitions, tokenizer=tokenizer, format='json', skip_header=False,
-            batch_sizes=batch_sizes, lower=lower,
+            batch_sizes=batch_sizes,
             # Sort examples according to length of premise and hypothesis
             sort_key=datasets.nli.NLIDataset.sort_key,
-            device=device
+            lower=lower, device=device
         )
 
     def textual_to_iterator(self, **kwargs):
@@ -444,18 +451,16 @@ class STSDatasetReader(DatasetReader):
             sequential examples.
         batch_sizes (tuple): Optional, tuple of batch sizes to use for the different splits, or None
             to use the same batch_size for all splits. Defaults to None.
-        lower: (bool): Optional, True if text should be lower cased, False if not. Defaults to
-            False.
         kwargs: Remaining keyword arguments. Will be ignored.
     """
-    def __init__(self, path, partitions, tokenizer, batch_sizes=None, lower=False,
-                 device='cpu', **kwargs):
+    def __init__(self, path, partitions, tokenizer, batch_sizes=None, lower=False, device='cpu',
+                 **kwargs):
         super(STSDatasetReader, self).__init__(
             path=path, partitions=partitions, tokenizer=tokenizer, format='tsv', skip_header=False,
-            batch_sizes=batch_sizes, lower=lower,
+            batch_sizes=batch_sizes,
             # Sort examples according to length of sentence1 and sentence2
             sort_key=lambda x: data.interleave_keys(len(x.sentence1), len(x.sentence2)),
-            device=device
+            lower=lower, device=device
         )
 
     def textual_to_iterator(self, **kwargs):
@@ -526,18 +531,16 @@ class DocumentClassificationDatasetReader(DatasetReader):
             sequential examples.
         batch_sizes (tuple): Optional, tuple of batch sizes to use for the different splits, or None
             to use the same batch_size for all splits. Defaults to None.
-        lower: (bool): Optional, True if text should be lower cased, False if not. Defaults to
-            False.
         kwargs: Remaining keyword arguments. Will be ignored.
     """
-    def __init__(self, path, partitions, tokenizer, batch_sizes=None, lower=False,
-                 device='cpu', **kwargs):
+    def __init__(self, path, partitions, tokenizer, batch_sizes=None, lower=False, device='cpu',
+                 **kwargs):
         super(DocumentClassificationDatasetReader, self).__init__(
             path=path, partitions=partitions, tokenizer=tokenizer, format='json', skip_header=False,
-            batch_sizes=batch_sizes, lower=lower,
+            batch_sizes=batch_sizes,
             # Sort examples according to length of documents
             sort_key=lambda x: len(x.text),
-            device=device
+            lower=lower, device=device
         )
 
     def textual_to_iterator(self, **kwargs):
