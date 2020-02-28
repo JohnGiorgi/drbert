@@ -9,9 +9,11 @@ from ..data.dataset_readers import DocumentClassificationDatasetReader
 from ..data.dataset_readers import NLIDatasetReader
 from ..data.dataset_readers import RelationClassificationDatasetReader
 from ..data.dataset_readers import SequenceLabellingDatasetReader
-from ..heads import DocumentClassificationHead
-from ..heads import SequenceClassificationHead
-from ..heads import SequenceLabellingHead
+from ..data.dataset_readers import STSDatasetReader
+from ..modules.heads import DocumentClassificationHead
+from ..modules.heads import SequenceClassificationHead
+from ..modules.heads import SequenceLabellingHead
+from ..modules.proportional_batch_sampler import ProportionalBatchSampler
 
 
 @pytest.fixture
@@ -33,12 +35,44 @@ def bert_config():
 
 
 @pytest.fixture
-def bert(bert_config):
+def bert_model(bert_config):
     """Pre-trained BERT model.
     """
     bert = BertModel(bert_config)
 
     return bert
+
+
+@pytest.fixture
+def tasks():
+    tasks = [
+        {
+            'name': 'snli_1.0',
+            'task': 'nli',
+            'path': resource_filename(__name__, 'resources/snli_1.0'),
+            'partitions': {
+                'train':      'snli_1.0_train',
+                'validation': 'snli_1.0_dev',
+                'test':       'snli_1.0_test',
+            },
+            'batch_sizes': (16, 32, 32),
+            'lower': True,
+        },
+        {
+            'name': 'ChemProt',
+            'task': 'relation_classification',
+            'path': resource_filename(__name__, 'resources/ChemProt'),
+            'partitions': {
+                'train':      'train.tsv',
+                'validation': 'dev.tsv',
+                'test':       'test.tsv',
+            },
+            'batch_sizes': (16, 16, 16),
+            'lower': True,
+        }
+    ]
+
+    return tasks
 
 
 @pytest.fixture
@@ -49,7 +83,7 @@ def sequence_labelling_head(bert_config):
     # TODO (John): This will change when we decouple the model from these tasks.
     bert_config.__dict__['num_deid_labels'] = num_labels
 
-    head = SequenceLabellingHead(bert_config)
+    head = SequenceLabellingHead(bert_config, num_labels)
 
     return batch_size, sequence_length, num_labels, head
 
@@ -62,7 +96,7 @@ def sequence_classification_head(bert_config):
     # TODO (John): This will change when we decouple the model from these tasks.
     bert_config.__dict__['num_labels'] = num_labels
 
-    head = SequenceClassificationHead(bert_config)
+    head = SequenceClassificationHead(bert_config, num_labels)
 
     return batch_size, sequence_length, num_labels, head
 
@@ -77,7 +111,7 @@ def document_classification_head(bert_config):
     bert_config.__dict__['num_cohort_labels'] = num_labels
     bert_config.__dict__['cohort_ffnn_size'] = cohort_ffnn_size
 
-    head = DocumentClassificationHead(bert_config)
+    head = DocumentClassificationHead(bert_config, num_labels)
 
     return batch_size, sequence_length, num_labels, head
 
@@ -94,6 +128,7 @@ def dataset_reader(bert_tokenizer):
         'skip_header':   False,
         'batch_sizes':   (16,),
         'lower':         False,
+        'device':        'cpu'
     }
 
     dataset_reader = DatasetReader(**args)
@@ -114,6 +149,7 @@ def sequence_labelling_dataset_reader(bert_tokenizer):
         'tokenizer':     bert_tokenizer,
         'batch_sizes':   (16, 256, 256),
         'lower':         False,
+        'device':        'cpu'
     }
 
     dataset_reader = SequenceLabellingDatasetReader(**args)
@@ -133,6 +169,7 @@ def relation_classification_dataset_reader(bert_tokenizer):
         'tokenizer':     bert_tokenizer,
         'batch_sizes':   (16, 256, 256),
         'lower':         False,
+        'device':        'cpu'
     }
 
     dataset_reader = RelationClassificationDatasetReader(**args)
@@ -151,6 +188,7 @@ def document_classification_dataset_reader(bert_tokenizer):
         'tokenizer':     bert_tokenizer,
         'batch_sizes':   (16, 256),
         'lower':         False,
+        'device':        'cpu'
     }
 
     dataset_reader = DocumentClassificationDatasetReader(**args)
@@ -170,8 +208,34 @@ def nli_dataset_reader(bert_tokenizer):
         'tokenizer':     bert_tokenizer,
         'batch_sizes':   (16, 256, 256),
         'lower':         False,
+        'device':        'cpu'
     }
 
     dataset_reader = NLIDatasetReader(**args)
 
     return args, dataset_reader
+
+
+@pytest.fixture
+def sts_dataset_reader(bert_tokenizer):
+    """Initialized STSDatasetReader.
+    """
+    args = {
+        'path':          resource_filename(__name__, 'resources/sts_2012'),
+        'partitions':    {'train':      'train.txt',
+                          'test':       'test.txt',
+                          },
+        'tokenizer':     bert_tokenizer,
+        'batch_sizes':   (16, 256),
+        'lower':         False,
+        'device':        'cpu'
+    }
+
+    dataset_reader = STSDatasetReader(**args)
+
+    return args, dataset_reader
+
+
+@pytest.fixture
+def batch_sampler(tasks):
+    return ProportionalBatchSampler(tasks, partition='train')

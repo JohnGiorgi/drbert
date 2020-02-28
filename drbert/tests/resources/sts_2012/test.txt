@@ -1,0 +1,5 @@
+A man with a hard hat is dancing.	A man wearing a hard hat is dancing.	5.000
+A plane is taking off.	An air plane is taking off.	5.000
+A young child is riding a horse.	A child is riding a horse.	4.750
+A man is feeding a mouse to a snake.	The man is feeding a mouse to the snake.	5.000
+A man is playing a large flute.	A man is playing a flute.	3.800

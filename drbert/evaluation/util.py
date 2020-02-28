@@ -119,6 +119,9 @@ def print_evaluation(evaluation, title=None):
 
 
 def save_eval_to_disk(args, step, **kwargs):
+    if not os.path.exists(args.output_dir) and args.local_rank in [-1, 0]:
+        os.makedirs(args.output_dir)
+
     evaluation = {'train': {}, 'valid': {}, 'test': {}}
     for partition in evaluation:
         for task, results in kwargs.items():

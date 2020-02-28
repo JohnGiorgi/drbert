@@ -8,7 +8,7 @@ VOCAB = 30000  # BERT has a vocab of ~30K
 
 
 class TestSequenceLabellingHead(object):
-    """Collects all unit tests for `drbert.heads.SequenceLabellingHead`.
+    """Collects all unit tests for `drbert.modules.heads.SequenceLabellingHead`.
     """
     def test_attributes_after_initialization(self, bert_config, sequence_labelling_head):
         _, sequence_length, num_labels, head = sequence_labelling_head
@@ -17,46 +17,46 @@ class TestSequenceLabellingHead(object):
         assert isinstance(head.dropout, (nn.Module, nn.Dropout))
         assert isinstance(head.classifier, (nn.Module, nn.Linear))
 
-    def test_forward_pass_input_ids_only(self, bert, sequence_labelling_head):
+    def test_forward_pass_input_ids_only(self, bert_model, sequence_labelling_head):
         batch_size, sequence_length, num_labels, head = sequence_labelling_head
 
         input_ids = torch.LongTensor(batch_size, sequence_length).random_(0, VOCAB)
 
-        outputs = head(bert, input_ids)
+        outputs = head(bert_model, input_ids)
 
         assert len(outputs) == 1
         assert outputs[0].size() == (batch_size, sequence_length, num_labels)
 
-    def test_forward_pass_with_attn_masks(self, bert, sequence_labelling_head):
+    def test_forward_pass_with_attn_masks(self, bert_model, sequence_labelling_head):
         batch_size, sequence_length, num_labels, head = sequence_labelling_head
 
         input_ids = torch.randint(VOCAB, (batch_size, sequence_length))
         attention_mask = torch.randint(2, (batch_size, sequence_length))
 
-        outputs = head(bert, input_ids, attention_mask=attention_mask)
+        outputs = head(bert_model, input_ids, attention_mask=attention_mask)
 
         assert len(outputs) == 1
         assert outputs[0].size() == (batch_size, sequence_length, num_labels)
 
-    def test_forward_pass_with_token_type_ids(self, bert, sequence_labelling_head):
+    def test_forward_pass_with_token_type_ids(self, bert_model, sequence_labelling_head):
         batch_size, sequence_length, num_labels, head = sequence_labelling_head
 
         input_ids = torch.randint(VOCAB, (batch_size, sequence_length))
         token_type_ids = torch.ones_like(input_ids)
 
-        outputs = head(bert, input_ids, token_type_ids=token_type_ids)
+        outputs = head(bert_model, input_ids, token_type_ids=token_type_ids)
 
         assert len(outputs) == 1
         assert outputs[0].size() == (batch_size, sequence_length, num_labels)
 
-    def test_forward_pass_with_position_ids(self, bert, sequence_labelling_head):
+    def test_forward_pass_with_position_ids(self, bert_model, sequence_labelling_head):
         batch_size, sequence_length, num_labels, head = sequence_labelling_head
 
         input_ids = torch.randint(VOCAB, (batch_size, sequence_length))
         position_ids = torch.arange(sequence_length, dtype=torch.long)
         position_ids = position_ids.unsqueeze(0).expand_as(input_ids)
 
-        outputs = head(bert, input_ids, position_ids=position_ids)
+        outputs = head(bert_model, input_ids, position_ids=position_ids)
 
         assert len(outputs) == 1
         assert outputs[0].size() == (batch_size, sequence_length, num_labels)
@@ -91,13 +91,13 @@ class TestSequenceLabellingHead(object):
                 else:
                     assert not torch.equal(weights, torch.zeros_like(weights))
 
-    def test_forward_pass_with_labels(self, bert, sequence_labelling_head):
+    def test_forward_pass_with_labels(self, bert_model, sequence_labelling_head):
         batch_size, sequence_length, num_labels, head = sequence_labelling_head
 
         input_ids = torch.randint(VOCAB, (batch_size, sequence_length))
         labels = torch.randint(0, num_labels, (batch_size, sequence_length))
 
-        outputs = head(bert, input_ids, labels=labels)
+        outputs = head(bert_model, input_ids, labels=labels)
 
         assert len(outputs) == 2
         assert outputs[0].size() == torch.Size([])  # Loss is a single element tensor
@@ -105,7 +105,7 @@ class TestSequenceLabellingHead(object):
 
 
 class TestSequenceClassificationHead(object):
-    """Collects all unit tests for `drbert.heads.SequenceClassificationHead`.
+    """Collects all unit tests for `drbert.modules.heads.SequenceClassificationHead`.
     """
     def test_attributes_after_initialization(self, bert_config, sequence_classification_head):
         _, sequence_length, num_labels, head = sequence_classification_head
@@ -114,46 +114,46 @@ class TestSequenceClassificationHead(object):
         assert isinstance(head.dropout, (nn.Module, nn.Dropout))
         assert isinstance(head.classifier, (nn.Module, nn.Linear))
 
-    def test_forward_pass_input_ids_only(self, bert, bert_config, sequence_classification_head):
+    def test_forward_pass_input_ids_only(self, bert_model, bert_config, sequence_classification_head):
         batch_size, sequence_length, num_labels, head = sequence_classification_head
 
         input_ids = torch.LongTensor(batch_size, sequence_length).random_(0, VOCAB)
 
-        outputs = head(bert, input_ids)
+        outputs = head(bert_model, input_ids)
 
         assert len(outputs) == 1
         assert outputs[0].size() == (batch_size, num_labels)
 
-    def test_forward_pass_with_attn_masks(self, bert, sequence_classification_head):
+    def test_forward_pass_with_attn_masks(self, bert_model, sequence_classification_head):
         batch_size, sequence_length, num_labels, head = sequence_classification_head
 
         input_ids = torch.randint(VOCAB, (batch_size, sequence_length))
         attention_mask = torch.randint(2, (batch_size, sequence_length))
 
-        outputs = head(bert, input_ids, attention_mask=attention_mask)
+        outputs = head(bert_model, input_ids, attention_mask=attention_mask)
 
         assert len(outputs) == 1
         assert outputs[0].size() == (batch_size, num_labels)
 
-    def test_forward_pass_with_token_type_ids(self, bert, sequence_classification_head):
+    def test_forward_pass_with_token_type_ids(self, bert_model, sequence_classification_head):
         batch_size, sequence_length, num_labels, head = sequence_classification_head
 
         input_ids = torch.randint(VOCAB, (batch_size, sequence_length))
         token_type_ids = torch.ones_like(input_ids)
 
-        outputs = head(bert, input_ids, token_type_ids=token_type_ids)
+        outputs = head(bert_model, input_ids, token_type_ids=token_type_ids)
 
         assert len(outputs) == 1
         assert outputs[0].size() == (batch_size, num_labels)
 
-    def test_forward_pass_with_position_ids(self, bert, sequence_classification_head):
+    def test_forward_pass_with_position_ids(self, bert_model, sequence_classification_head):
         batch_size, sequence_length, num_labels, head = sequence_classification_head
 
         input_ids = torch.randint(VOCAB, (batch_size, sequence_length))
         position_ids = torch.arange(sequence_length, dtype=torch.long)
         position_ids = position_ids.unsqueeze(0).expand_as(input_ids)
 
-        outputs = head(bert, input_ids, position_ids=position_ids)
+        outputs = head(bert_model, input_ids, position_ids=position_ids)
 
         assert len(outputs) == 1
         assert outputs[0].size() == (batch_size, num_labels)
@@ -189,13 +189,13 @@ class TestSequenceClassificationHead(object):
                 else:
                     assert not torch.equal(weights, torch.zeros_like(weights))
 
-    def test_forward_pass_with_labels(self, bert, sequence_classification_head):
+    def test_forward_pass_with_labels(self, bert_model, sequence_classification_head):
         batch_size, sequence_length, num_labels, head = sequence_classification_head
 
         input_ids = torch.randint(VOCAB, (batch_size, sequence_length))
         labels = torch.randint(num_labels, (batch_size,))
 
-        outputs = head(bert, input_ids, labels=labels)
+        outputs = head(bert_model, input_ids, labels=labels)
 
         assert len(outputs) == 2
         assert outputs[0].size() == torch.Size([])  # Loss is a single element tensor
@@ -203,7 +203,7 @@ class TestSequenceClassificationHead(object):
 
 
 class TestDocumentClassificationHead(object):
-    """Collects all unit tests for `drbert.heads.DocumentClassificationHead`.
+    """Collects all unit tests for `drbert.modules.heads.DocumentClassificationHead`.
     """
     def test_attributes_after_initialization(self, bert_config, document_classification_head):
         _, sequence_length, num_labels, head = document_classification_head
@@ -212,46 +212,46 @@ class TestDocumentClassificationHead(object):
         assert isinstance(head.dropout, (nn.Module, nn.Dropout))
         assert isinstance(head.classifier, (nn.Module, nn.Linear))
 
-    def test_forward_pass_input_ids_only(self, bert, bert_config, document_classification_head):
+    def test_forward_pass_input_ids_only(self, bert_model, bert_config, document_classification_head):
         batch_size, sequence_length, num_labels, head = document_classification_head
 
         input_ids = torch.LongTensor(batch_size, sequence_length).random_(0, VOCAB)
 
-        outputs = head(bert, input_ids)
+        outputs = head(bert_model, input_ids)
 
         assert len(outputs) == 1
         assert outputs[0].size() == num_labels
 
-    def test_forward_pass_with_attn_masks(self, bert, document_classification_head):
+    def test_forward_pass_with_attn_masks(self, bert_model, document_classification_head):
         batch_size, sequence_length, num_labels, head = document_classification_head
 
         input_ids = torch.randint(VOCAB, (batch_size, sequence_length))
         attention_mask = torch.randint(2, (batch_size, sequence_length))
 
-        outputs = head(bert, input_ids, attention_mask=attention_mask)
+        outputs = head(bert_model, input_ids, attention_mask=attention_mask)
 
         assert len(outputs) == 1
         assert outputs[0].size() == num_labels
 
-    def test_forward_pass_with_token_type_ids(self, bert, document_classification_head):
+    def test_forward_pass_with_token_type_ids(self, bert_model, document_classification_head):
         batch_size, sequence_length, num_labels, head = document_classification_head
 
         input_ids = torch.randint(VOCAB, (batch_size, sequence_length))
         token_type_ids = torch.ones_like(input_ids)
 
-        outputs = head(bert, input_ids, token_type_ids=token_type_ids)
+        outputs = head(bert_model, input_ids, token_type_ids=token_type_ids)
 
         assert len(outputs) == 1
         assert outputs[0].size() == num_labels
 
-    def test_forward_pass_with_position_ids(self, bert, document_classification_head):
+    def test_forward_pass_with_position_ids(self, bert_model, document_classification_head):
         batch_size, sequence_length, num_labels, head = document_classification_head
 
         input_ids = torch.randint(VOCAB, (batch_size, sequence_length))
         position_ids = torch.arange(sequence_length, dtype=torch.long)
         position_ids = position_ids.unsqueeze(0).expand_as(input_ids)
 
-        outputs = head(bert, input_ids, position_ids=position_ids)
+        outputs = head(bert_model, input_ids, position_ids=position_ids)
 
         assert len(outputs) == 1
         assert outputs[0].size() == num_labels
@@ -287,13 +287,13 @@ class TestDocumentClassificationHead(object):
                 else:
                     assert not torch.equal(weights, torch.zeros_like(weights))
 
-    def test_forward_pass_with_labels(self, bert, document_classification_head):
+    def test_forward_pass_with_labels(self, bert_model, document_classification_head):
         batch_size, sequence_length, num_labels, head = document_classification_head
 
         input_ids = torch.randint(VOCAB, (batch_size, sequence_length))
         labels = torch.randint(num_labels[-1], (num_labels[0],))
 
-        outputs = head(bert, input_ids, labels=labels)
+        outputs = head(bert_model, input_ids, labels=labels)
 
         assert len(outputs) == 2
         assert outputs[0].size() == torch.Size([])  # Loss is a single element tensor

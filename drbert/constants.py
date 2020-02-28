@@ -4,10 +4,15 @@ CLS = '[CLS]'
 UNK = '[UNK]'
 PAD = '[PAD]'
 WORDPIECE = 'X'
-PHI = 'PHI'
 BERT_MAX_SENT_LEN = 512
 
-COHORT_DATA_DIR = None
+PARTITIONS = {'train', 'validation', 'test'}
+
+# A set of all valid task names. Additional subsets are simply for convience
+TASKS = {'sequence_labelling', 'relation_classification', 'document_classification', 'nli', 'sts'}
+SEQUENCE_CLASSIFICATION_TASKS = {'relation_classification', 'nli', 'sts'}
+REGRESSION_TASKS = {'sts'}
+
 
 DEID_TYPES = [
     PAD,
